@@ -9,7 +9,7 @@ A beginner-friendly document management REST API built with **FastAPI**. This pr
 - **File Validation:** Reject unsupported file types, empty files, and files larger than 10 MB.
 - **List Documents:** Retrieve metadata for all uploaded documents.
 - **API Documentation:** Explore and test endpoints through Swagger UI.
-- **Automated Testing:** Test API functionality using Pytest and FastAPI TestClient.
+- **Automated Testing:** Test API functionality  using Pytest and FastAPI TestClient.
 
 ## Tech Stack
 
