@@ -19,11 +19,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AI Document Assistant", lifespan=lifespan)
 
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
-MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_SIZE = MAX_UPLOAD_BYTES
 
 
 class DocumentCollection:
-    """Helper collection providing backward-compatibility for tests."""
+    """Helper collection providing backward-compatibility for tests and inspections."""
 
     def clear(self) -> None:
         with Session(engine) as session:
@@ -45,6 +46,11 @@ class DocumentCollection:
 
 
 documents = DocumentCollection()
+
+
+def get_document_store():
+    """Dependency providing access to the document storage."""
+    return documents
 
 
 @app.get("/health")
@@ -72,7 +78,7 @@ async def upload_document(
             detail="Unsupported file type. Allowed types: PDF, TXT, DOCX",
         )
 
-    content = await file.read(MAX_SIZE + 1)
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
 
     if not content:
         raise HTTPException(
@@ -80,7 +86,7 @@ async def upload_document(
             detail="File is empty",
         )
 
-    if len(content) > MAX_SIZE:
+    if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
             detail="File exceeds the 10 MB limit",

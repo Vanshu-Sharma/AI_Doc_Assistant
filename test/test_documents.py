@@ -1,15 +1,19 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.database import engine
-from app.main import app, documents
+from app.main import MAX_UPLOAD_BYTES, app, documents
 from app.models import Document
 
 client = TestClient(app)
 
 
-def setup_function():
-    """Clear documents before each test."""
+@pytest.fixture(autouse=True)
+def clean_database():
+    """Clear database documents before each test."""
+    documents.clear()
+    yield
     documents.clear()
 
 
@@ -92,8 +96,28 @@ def test_upload_unsupported_file_type():
     assert response.status_code == 415
 
 
+def test_upload_file_exact_10_mb():
+    exact_content = b"a" * MAX_UPLOAD_BYTES
+
+    response = client.post(
+        "/documents",
+        files={
+            "file": (
+                "exact_10mb.txt",
+                exact_content,
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["filename"] == "exact_10mb.txt"
+    assert data["size_bytes"] == MAX_UPLOAD_BYTES
+
+
 def test_upload_file_over_10_mb():
-    large_content = b"a" * (10 * 1024 * 1024 + 1)
+    large_content = b"a" * (MAX_UPLOAD_BYTES + 1)
 
     response = client.post(
         "/documents",
