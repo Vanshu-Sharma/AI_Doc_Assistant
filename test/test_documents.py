@@ -1,13 +1,15 @@
-
 from fastapi.testclient import TestClient
+from sqlmodel import Session
 
+from app.database import engine
 from app.main import app, documents
+from app.models import Document
 
 client = TestClient(app)
 
 
 def setup_function():
-    """Clear in-memory documents before each test."""
+    """Clear documents before each test."""
     documents.clear()
 
 
@@ -105,3 +107,28 @@ def test_upload_file_over_10_mb():
     )
 
     assert response.status_code == 413
+
+
+def test_document_persisted_in_database():
+    content = b"Database persistence test content."
+    response = client.post(
+        "/documents",
+        files={
+            "file": (
+                "persisted.txt",
+                content,
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 201
+    doc_id = response.json()["id"]
+
+    # Verify directly from database session that the document row exists
+    with Session(engine) as session:
+        doc = session.get(Document, doc_id)
+        assert doc is not None
+        assert doc.filename == "persisted.txt"
+        assert doc.size_bytes == len(content)
+        assert doc.content_type == "text/plain"

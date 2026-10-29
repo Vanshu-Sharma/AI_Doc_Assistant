@@ -1,19 +1,50 @@
-
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from sqlmodel import Session, delete, select
 
-from app.models import Document_Data
+from app.database import engine, get_session, init_db
+from app.models import Document, Document_Data
 
-app = FastAPI(title="AI Document Assistant")
 
-# Temporary in-memory storage
-documents: list[Document_Data] = []
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="AI Document Assistant", lifespan=lifespan)
 
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
 MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+class DocumentCollection:
+    """Helper collection providing backward-compatibility for tests."""
+
+    def clear(self) -> None:
+        with Session(engine) as session:
+            session.exec(delete(Document))
+            session.commit()
+
+    def __iter__(self):
+        with Session(engine) as session:
+            return iter(session.exec(select(Document)).all())
+
+    def __len__(self) -> int:
+        with Session(engine) as session:
+            return len(session.exec(select(Document)).all())
+
+    def append(self, document: Document) -> None:
+        with Session(engine) as session:
+            session.add(document)
+            session.commit()
+
+
+documents = DocumentCollection()
 
 
 @app.get("/health")
@@ -21,8 +52,11 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/documents", status_code=201)
-async def upload_document(file: UploadFile = File(...)):
+@app.post("/documents", response_model=Document, status_code=201)
+async def upload_document(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
     filename = Path(file.filename or "").name
     extension = Path(filename).suffix.lower()
 
@@ -52,7 +86,7 @@ async def upload_document(file: UploadFile = File(...)):
             detail="File exceeds the 10 MB limit",
         )
 
-    document = Document_Data(
+    document = Document(
         id=str(uuid4()),
         filename=filename,
         content_type=file.content_type or "application/octet-stream",
@@ -60,10 +94,13 @@ async def upload_document(file: UploadFile = File(...)):
         uploaded_at=datetime.now(timezone.utc),
     )
 
-    documents.append(document)
+    session.add(document)
+    session.commit()
+    session.refresh(document)
     return document
 
 
-@app.get("/documents", response_model=list[Document_Data])
-def list_documents():
-    return documents
+@app.get("/documents", response_model=list[Document])
+def list_documents(session: Session = Depends(get_session)):
+    statement = select(Document)
+    return session.exec(statement).all()
