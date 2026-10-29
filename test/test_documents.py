@@ -1,14 +1,19 @@
-
+import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app, documents
+from app.main import MAX_UPLOAD_BYTES, app, get_document_store
+from app.models import Document_Data
 
 client = TestClient(app)
 
 
-def setup_function():
-    """Clear in-memory documents before each test."""
-    documents.clear()
+@pytest.fixture(autouse=True)
+def isolated_document_store():
+    """Provide a fresh, isolated document store for each test via dependency override."""
+    store: list[Document_Data] = []
+    app.dependency_overrides[get_document_store] = lambda: store
+    yield store
+    app.dependency_overrides.clear()
 
 
 def test_health_check():
@@ -90,8 +95,28 @@ def test_upload_unsupported_file_type():
     assert response.status_code == 415
 
 
+def test_upload_file_exact_10_mb():
+    exact_content = b"a" * MAX_UPLOAD_BYTES
+
+    response = client.post(
+        "/documents",
+        files={
+            "file": (
+                "exact_10mb.txt",
+                exact_content,
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["filename"] == "exact_10mb.txt"
+    assert data["size_bytes"] == MAX_UPLOAD_BYTES
+
+
 def test_upload_file_over_10_mb():
-    large_content = b"a" * (10 * 1024 * 1024 + 1)
+    large_content = b"a" * (MAX_UPLOAD_BYTES + 1)
 
     response = client.post(
         "/documents",

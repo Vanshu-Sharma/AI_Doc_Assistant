@@ -1,9 +1,8 @@
-
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 
 from app.models import Document_Data
 
@@ -12,8 +11,15 @@ app = FastAPI(title="AI Document Assistant")
 # Temporary in-memory storage
 documents: list[Document_Data] = []
 
+
+def get_document_store() -> list[Document_Data]:
+    """Dependency providing access to the document storage."""
+    return documents
+
+
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
-MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_SIZE = MAX_UPLOAD_BYTES
 
 
 @app.get("/health")
@@ -21,8 +27,11 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/documents", status_code=201)
-async def upload_document(file: UploadFile = File(...)):
+@app.post("/documents", response_model=Document_Data, status_code=201)
+async def upload_document(
+    file: UploadFile = File(...),
+    doc_store: list[Document_Data] = Depends(get_document_store),
+):
     filename = Path(file.filename or "").name
     extension = Path(filename).suffix.lower()
 
@@ -38,7 +47,7 @@ async def upload_document(file: UploadFile = File(...)):
             detail="Unsupported file type. Allowed types: PDF, TXT, DOCX",
         )
 
-    content = await file.read(MAX_SIZE + 1)
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
 
     if not content:
         raise HTTPException(
@@ -46,7 +55,7 @@ async def upload_document(file: UploadFile = File(...)):
             detail="File is empty",
         )
 
-    if len(content) > MAX_SIZE:
+    if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
             detail="File exceeds the 10 MB limit",
@@ -60,10 +69,10 @@ async def upload_document(file: UploadFile = File(...)):
         uploaded_at=datetime.now(timezone.utc),
     )
 
-    documents.append(document)
+    doc_store.append(document)
     return document
 
 
 @app.get("/documents", response_model=list[Document_Data])
-def list_documents():
-    return documents
+def list_documents(doc_store: list[Document_Data] = Depends(get_document_store)):
+    return doc_store
