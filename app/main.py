@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from sqlmodel import Session, delete, select
 
 from app.database import engine, get_session, init_db
-from app.models import Document, Document_Data
+from app.models import Document
 
 
 @asynccontextmanager
