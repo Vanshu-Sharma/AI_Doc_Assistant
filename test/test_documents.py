@@ -1,50 +1,29 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import SQLModel, Session, create_engine
-from sqlalchemy.pool import StaticPool
-from app.database import get_session
-from app.main import MAX_UPLOAD_BYTES, app
-from app.models import Document
+
+from app.main import MAX_UPLOAD_BYTES, app, get_document_store
+from app.models import Document_Data
+
+client = TestClient(app)
 
 
-@pytest.fixture
-def test_engine():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    SQLModel.metadata.create_all(engine)
-
-    yield engine
-
-    SQLModel.metadata.drop_all(engine)
-    engine.dispose()
+@pytest.fixture(autouse=True)
+def isolated_document_store():
+    """Provide a fresh, isolated document store for each test via dependency override."""
+    store: list[Document_Data] = []
+    app.dependency_overrides[get_document_store] = lambda: store
+    yield store
+    app.dependency_overrides.clear()
 
 
-@pytest.fixture
-def client(test_engine):
-    def override_get_session():
-        with Session(test_engine) as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override_get_session
-
-    try:
-        with TestClient(app) as test_client:
-            yield test_client
-    finally:
-        app.dependency_overrides.pop(get_session, None)
-        
-def test_health_check(client):
+def test_health_check():
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-def test_upload_valid_txt_file(client):
+def test_upload_valid_txt_file():
     file_content = b"This is a test document."
 
     response = client.post(
@@ -67,7 +46,7 @@ def test_upload_valid_txt_file(client):
     assert "uploaded_at" in data
 
 
-def test_list_documents(client):
+def test_list_documents():
     client.post(
         "/documents",
         files={
@@ -86,7 +65,7 @@ def test_list_documents(client):
     assert response.json()[0]["filename"] == "sample.txt"
 
 
-def test_upload_empty_file(client):
+def test_upload_empty_file():
     response = client.post(
         "/documents",
         files={
@@ -101,7 +80,7 @@ def test_upload_empty_file(client):
     assert response.status_code == 400
 
 
-def test_upload_unsupported_file_type(client):
+def test_upload_unsupported_file_type():
     response = client.post(
         "/documents",
         files={
@@ -116,7 +95,7 @@ def test_upload_unsupported_file_type(client):
     assert response.status_code == 415
 
 
-def test_upload_file_exact_10_mb(client):
+def test_upload_file_exact_10_mb():
     exact_content = b"a" * MAX_UPLOAD_BYTES
 
     response = client.post(
@@ -136,7 +115,7 @@ def test_upload_file_exact_10_mb(client):
     assert data["size_bytes"] == MAX_UPLOAD_BYTES
 
 
-def test_upload_file_over_10_mb(client):
+def test_upload_file_over_10_mb():
     large_content = b"a" * (MAX_UPLOAD_BYTES + 1)
 
     response = client.post(
@@ -151,28 +130,3 @@ def test_upload_file_over_10_mb(client):
     )
 
     assert response.status_code == 413
-
-
-def test_document_persisted_in_database(client, test_engine):
-    content = b"Database persistence test content."
-    response = client.post(
-        "/documents",
-        files={
-            "file": (
-                "persisted.txt",
-                content,
-                "text/plain",
-            )
-        },
-    )
-
-    assert response.status_code == 201
-    doc_id = response.json()["id"]
-
-    # Verify directly from database session that the document row exists
-    with Session(test_engine) as session:
-        doc = session.get(Document, doc_id)
-        assert doc is not None
-        assert doc.filename == "persisted.txt"
-        assert doc.size_bytes == len(content)
-        assert doc.content_type == "text/plain"
