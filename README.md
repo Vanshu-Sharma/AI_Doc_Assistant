@@ -31,7 +31,6 @@ AI-Doc-Assistant/
 │   └── models.py
 ├── tests/
 │   └── test_documents.py
-├── .env.example
 ├── .gitignore
 ├── pyproject.toml
 ├── uv.lock
