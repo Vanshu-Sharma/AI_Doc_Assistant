@@ -1,6 +1,6 @@
 # AI-Doc-Assistant
 
-[![CI](https://github.com/Vanshu-Sharma/AI_Doc_Assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/Vanshu-Sharma/AI_Doc_Assistant/actions/workflows/ci.yml)
+### CI
 
 A beginner-friendly document management REST API built with **FastAPI**, **SQLModel**, **PostgreSQL**, and **Docker**. This project implements document uploads, metadata validation, persistent database storage, and containerized deployment with one command.
 
