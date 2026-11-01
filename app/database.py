@@ -2,7 +2,7 @@ import logging
 import os
 import socket
 import time
-from urllib.parse import urlparse
+from sqlalchemy.engine import make_url
 
 from dotenv import load_dotenv
 from sqlmodel import Session, SQLModel, create_engine
@@ -16,25 +16,21 @@ logger = logging.getLogger(__name__)
 def get_resolved_database_url() -> str:
     url = os.getenv("DATABASE_URL", "sqlite:///./doc_assistant.db")
 
-    # SQLAlchemy 2.0 requires postgresql:// instead of postgres://
+    # Normalize PostgreSQL URL scheme
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
 
-    # If the URL specifies host 'db' (Docker service name),
-    # but 'db' cannot be resolved (i.e. running outside Docker on the host),
-    # fallback to localhost so running locally works seamlessly.
-    try:
-        parsed = urlparse(url)
-        if parsed.hostname == "db":
-            try:
-                socket.gethostbyname("db")
-            except socket.gaierror:
-                netloc = parsed.netloc.replace("@db", "@localhost")
-                url = parsed._replace(netloc=netloc).geturl()
-    except Exception:
-        pass
+    parsed = make_url(url)
 
-    return url
+    # Resolve Docker service hostname
+    if parsed.host == "db":
+        try:
+            socket.gethostbyname("db")
+        except socket.gaierror:
+            logger.warning("Database host 'db' not found. Falling back to localhost.")
+            parsed = parsed.set(host="localhost")
+
+    return parsed.render_as_string(hide_password=False)
 
 
 DATABASE_URL = get_resolved_database_url()

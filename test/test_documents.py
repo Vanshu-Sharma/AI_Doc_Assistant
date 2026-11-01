@@ -4,8 +4,8 @@ from sqlmodel import Session, SQLModel, delete
 
 from app.database import engine
 from app.models import Document
-from app.main import MAX_UPLOAD_BYTES, app, get_document_store
-from app.models import Document_Data
+from app.main import MAX_UPLOAD_BYTES, app
+
 
 @pytest.fixture(autouse=True)
 def clean_database():
@@ -22,17 +22,6 @@ def clean_database():
     with Session(engine) as session:
         session.exec(delete(Document))
         session.commit()
-
-@pytest.fixture(autouse=True)
-def isolated_document_store():
-    """Provide a fresh document store for each test."""
-    store: list[Document_Data] = []
-
-    app.dependency_overrides[get_document_store] = lambda: store
-
-    yield store
-
-    app.dependency_overrides.clear()
 
 
 @pytest.fixture
