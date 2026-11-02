@@ -10,6 +10,11 @@ venv/
 # Environment variables
 .env
 
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
 # Testing and coverage
 .pytest_cache/
 .coverage
