@@ -17,6 +17,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application code
 COPY app/ ./app/
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
 COPY README.md ./
 
 # Ensure virtualenv binaries are used

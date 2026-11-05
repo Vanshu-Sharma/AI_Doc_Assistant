@@ -22,3 +22,4 @@ htmlcov/
 
 # IDE
 .vscode/
+ai_doc_db_backup.sql
