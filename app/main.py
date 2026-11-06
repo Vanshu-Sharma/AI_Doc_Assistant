@@ -11,7 +11,8 @@ from fastapi.responses import StreamingResponse
 import httpx
 from sqlmodel import Session, delete, select
 
-from app.database import engine, get_session, init_db
+
+from app.database import engine, get_session
 from app.llm import TokenUsage, generate
 from app.models import Document, UsageLog
 from app.pricing import calculate_cost
@@ -22,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
     yield
 
 
