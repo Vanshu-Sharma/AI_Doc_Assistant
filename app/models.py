@@ -14,6 +14,7 @@ class Document(SQLModel, table=True):
     uploaded_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
+    description: str | None = Field(default=None)
 
 
 # Backward compatibility alias

@@ -17,6 +17,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application code
 COPY app/ ./app/
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
 COPY README.md ./
 
 # Ensure virtualenv binaries are used
@@ -24,4 +26,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

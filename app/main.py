@@ -6,13 +6,12 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from sqlmodel import Session, delete, select
 
-from app.database import engine, get_session, init_db
+from app.database import engine, get_session
 from app.models import Document
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
     yield
 
 
