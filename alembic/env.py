@@ -1,4 +1,3 @@
-
 import os
 from logging.config import fileConfig
 
@@ -15,14 +14,21 @@ load_dotenv()
 # Alembic configuration
 config = context.config
 
-# Configure database URL from environment
+# Require DATABASE_URL strictly from environment
 database_url = os.getenv("DATABASE_URL")
 
-if database_url:
-    config.set_main_option(
-        "sqlalchemy.url",
-        database_url.replace("%", "%%"),
+if not database_url or not database_url.strip():
+    raise RuntimeError(
+        "DATABASE_URL environment variable is not configured."
     )
+
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+config.set_main_option(
+    "sqlalchemy.url",
+    database_url.replace("%", "%%"),
+)
 
 # Configure logging
 if config.config_file_name is not None:
