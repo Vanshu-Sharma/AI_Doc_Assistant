@@ -1,0 +1,18 @@
+Aman Verma
+Frontend Developer | Delhi
+
+Profile
+Frontend developer experienced in creating responsive web applications and interactive user interfaces.
+
+Phone: 9123456780
+
+Technical Skills
+- HTML
+- CSS
+- JavaScript
+- React
+- Tailwind CSS
+- Git
+
+Experience
+1 year of freelance web development experience.

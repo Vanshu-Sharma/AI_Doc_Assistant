@@ -13,10 +13,10 @@ from sqlmodel import Session, delete, select
 
 
 from app.database import engine, get_session
-from app.llm import TokenUsage, generate
+from app.llm import ExtractionValidationError, TokenUsage, extract_resume, generate
 from app.models import Document, UsageLog
 from app.pricing import calculate_cost
-from app.schema import AskRequest
+from app.schema import AskRequest, ExtractRequest, ResumeData
 
 logger = logging.getLogger(__name__)
 
@@ -295,3 +295,133 @@ async def ask(
         stream_response_generator(),
         media_type="text/plain; charset=utf-8",
     )
+
+
+@app.post("/extract", response_model=ResumeData, status_code=200)
+async def extract(
+    request: ExtractRequest,
+    session: Session = Depends(get_session),
+):
+    """Extract structured resume data (name, email, phone, skills) from raw resume text."""
+    start_time = time.perf_counter()
+    logger.info("Extraction request started. Provider: %s", request.provider)
+
+    usage_records: list[TokenUsage] = []
+
+    def on_usage(usage: TokenUsage) -> None:
+        usage_records.append(usage)
+        logger.info(
+            "Token usage captured (provider=%s, model=%s, input=%d, output=%d, total=%d)",
+            usage.provider,
+            usage.model,
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.total_tokens,
+        )
+
+    def _persist_usage_records(latency_seconds: float) -> None:
+        for usage in usage_records:
+            provider_name = usage.provider or request.provider
+            model_name = usage.model or "unknown"
+            try:
+                cost_usd = calculate_cost(
+                    provider=provider_name,
+                    model=model_name,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                )
+            except ValueError as cost_err:
+                logger.warning(
+                    "Cost calculation failed for provider=%s model=%s: %s. Defaulting to 0.",
+                    provider_name,
+                    model_name,
+                    cost_err,
+                )
+                cost_usd = Decimal("0")
+            try:
+                save_usage_log(
+                    session=session,
+                    provider=provider_name,
+                    model=model_name,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    total_tokens=usage.total_tokens,
+                    latency_seconds=latency_seconds,
+                    cost_usd=cost_usd,
+                )
+                logger.info(
+                    "Usage record persisted (provider=%s, model=%s).",
+                    provider_name,
+                    model_name,
+                )
+            except Exception as db_exc:
+                logger.error(
+                    "Database persistence failed for extraction usage log: %s",
+                    db_exc,
+                    exc_info=True,
+                )
+
+    try:
+        result = await extract_resume(
+            resume_text=request.resume_text,
+            provider=request.provider,
+            on_usage=on_usage,
+        )
+        latency_seconds = time.perf_counter() - start_time
+        logger.info("Extraction completed successfully.")
+        _persist_usage_records(latency_seconds)
+        return result
+
+    except ExtractionValidationError as exc:
+        latency_seconds = time.perf_counter() - start_time
+        _persist_usage_records(latency_seconds)
+        logger.error("Resume extraction validation error: %s", exc)
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+    except TimeoutError as exc:
+        logger.error("LLM request timed out during extraction: %s", exc)
+        raise HTTPException(
+            status_code=504,
+            detail="LLM request timed out.",
+        ) from exc
+    except (ConnectionError, httpx.TransportError) as exc:
+        logger.error("LLM connection error during extraction: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to connect to LLM provider.",
+        ) from exc
+    except ValueError as exc:
+        logger.error("LLM configuration error during extraction: %s", exc)
+        raise HTTPException(
+            status_code=400 if "Unsupported provider" in str(exc) else 500,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+        if status_code is None and hasattr(exc, "response"):
+            status_code = getattr(exc.response, "status_code", None)
+
+        try:
+            status_code = int(status_code)
+        except (TypeError, ValueError):
+            status_code = None
+
+        logger.error("LLM provider error during extraction (%s): %s", status_code, exc)
+
+        if status_code == 429:
+            raise HTTPException(
+                status_code=429,
+                detail="LLM provider rate limit exceeded.",
+            ) from exc
+        elif status_code and 500 <= status_code <= 599:
+            raise HTTPException(
+                status_code=502,
+                detail="LLM provider service error.",
+            ) from exc
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="An error occurred while extracting resume data.",
+            ) from exc

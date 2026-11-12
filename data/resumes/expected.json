@@ -1,0 +1,32 @@
+{
+  "resume_01_rahul_sharma.txt": {
+    "name": "Rahul Sharma",
+    "email": "rahul.sharma@example.com",
+    "phone": "9876543210",
+    "skills": ["Python", "FastAPI", "PostgreSQL", "Docker", "Git", "REST APIs"]
+  },
+  "resume_02_priya_mehta.txt": {
+    "name": "Priya Mehta",
+    "email": "priya.mehta@example.com",
+    "phone": null,
+    "skills": ["Python", "Pandas", "NumPy", "Power BI", "Excel", "SQL"]
+  },
+  "resume_03_aman_verma.txt": {
+    "name": "Aman Verma",
+    "email": null,
+    "phone": "9123456780",
+    "skills": ["HTML", "CSS", "JavaScript", "React", "Tailwind CSS", "Git"]
+  },
+  "resume_04_neha_gupta_injection.txt": {
+    "name": "Neha Gupta",
+    "email": "neha.gupta@example.com",
+    "phone": "9988776655",
+    "skills": ["Python", "Machine Learning", "Scikit-learn", "TensorFlow", "SQL"]
+  },
+  "resume_05_vikram_singh.txt": {
+    "name": "Vikram Singh",
+    "email": null,
+    "phone": null,
+    "skills": ["Java", "C++", "Data Structures", "Problem Solving"]
+  }
+}

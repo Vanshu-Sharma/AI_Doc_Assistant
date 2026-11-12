@@ -12,6 +12,9 @@ This service implements document management, asynchronous streaming LLM chat end
 - **Upload & Validate Documents:** Accept PDF, TXT, and DOCX files up to 10 MB with validation.
 - **Persistent Database Storage:** Store document metadata in PostgreSQL using SQLModel.
 - **LLM Streaming Endpoint (`POST /ask`):** Stream responses from Google Gemini and Groq chunk-by-chunk using FastAPI `StreamingResponse`.
+- **Structured Output Resume Extraction (`POST /extract`):** Extract structured candidate details (`name`, `email`, `phone`, `skills`) from unstructured resume text using native provider structured output (`response_schema` / JSON mode).
+- **Pydantic Validation & One-Time Self-Correction Retry:** Strong schema validation (`EmailStr`, list of strings, null for missing fields) with exactly one automatic corrective retry when validation fails.
+- **Prompt Injection Defense:** Strict prompt security treating resume text as untrusted data to protect against prompt overrides.
 - **Actual Token Usage Tracking:** Capture exact input, output, and total token usage metadata directly from provider SDKs without estimation.
 - **Financial Precision Cost Calculation:** Compute input, output, and combined costs using Python `Decimal` per million tokens.
 - **Usage Logging:** Automatically persist provider, model, token usage, latency, and cost to PostgreSQL `UsageLog` table.
@@ -49,15 +52,20 @@ AI-Doc-Assistant/
 ├── app/
 │   ├── __init__.py
 │   ├── database.py       # Engine, connection retry, and session management
-│   ├── llm.py            # Provider integration, streaming, retries, token usage extraction
-│   ├── main.py           # FastAPI routes and lifecycle
+│   ├── llm.py            # Provider integration, streaming, structured output, retries
+│   ├── main.py           # FastAPI routes and lifecycle (POST /ask, POST /extract)
 │   ├── models.py         # SQLModel database models (Document, UsageLog)
 │   ├── pricing.py        # Model pricing registry and cost calculation
-│   └── schema.py         # Pydantic validation schemas (AskRequest, UsageResponse)
+│   └── schema.py         # Pydantic validation schemas (AskRequest, ResumeData, ExtractRequest)
+├── data/
+│   └── resumes/          # Directory for 20 trainer-provided fictional resumes & expected.json
+├── scripts/
+│   └── eval_extract.py   # Dataset evaluation script measuring extraction accuracy
 ├── test/
-│   ├── conftest.py       # SQLite test database setup
+│   ├── conftest.py          # SQLite test database setup
 │   ├── test_ask_endpoint.py # POST /ask API tests
 │   ├── test_documents.py    # Document upload and retrieval tests
+│   ├── test_extract.py      # POST /extract, Pydantic validation, and retry tests
 │   ├── test_llm.py          # LLM streaming and usage extraction tests
 │   ├── test_llm_retry.py    # LLM retry and backoff tests
 │   └── test_pricing.py      # Pricing and cost calculation tests
@@ -276,7 +284,85 @@ with httpx.Client() as client:
 
 ---
 
-### 2. Document Management Endpoints
+### 2. Resume Information Extraction: `POST /extract`
+
+Extracts structured candidate information (`name`, `email`, `phone`, `skills`) from unstructured resume text using native provider structured output and enforces strict Pydantic validation with a single corrective retry.
+
+#### Request Body (`application/json`):
+
+```json
+{
+  "resume_text": "Rahul Sharma is a Python developer. Email: rahul@gmail.com. Skills: Python, SQL.",
+  "provider": "gemini"
+}
+```
+
+- `resume_text` (string, required): Raw text of the resume to extract data from.
+- `provider` (string, optional): `"gemini"` or `"groq"`. Defaults to `"gemini"`.
+
+#### Successful Response (`application/json`, HTTP 200):
+
+```json
+{
+  "name": "Rahul Sharma",
+  "email": "rahul@gmail.com",
+  "phone": null,
+  "skills": ["Python", "SQL"]
+}
+```
+
+#### Explanation of Structured Output
+Large Language Models generate probabilistic unstructured text by default. Structured output constrains the model's generation to strictly follow a defined JSON schema:
+- **Google Gemini:** Leverages the `google-genai` SDK with `types.GenerateContentConfig(response_mime_type="application/json", response_schema=ResumeData)`. This directs the Gemini model engine to constrain generation directly according to the schema.
+- **Groq:** Uses `response_format={"type": "json_object"}` to guarantee that the output is syntactically valid JSON.
+
+#### Explanation of Pydantic Validation
+While JSON mode guarantees valid JSON syntax, it does not guarantee semantic data correctness or strict field compliance. Pydantic validation parses the raw JSON into the strongly-typed `ResumeData` model:
+- `name`: string or `null` if missing
+- `email`: validated RFC-compliant email address via `EmailStr` or `null` if missing
+- `phone`: string or `null` if missing
+- `skills`: list of strings (`Field(default_factory=list)`)
+
+If any field fails validation (for instance, an invalid email address format), Pydantic raises a `ValidationError` which triggers the self-correction mechanism.
+
+#### One-Time Self-Correction Retry Mechanism
+When LLM extraction output fails Pydantic validation or is malformed:
+1. Attempt 1 response is parsed and validated against `ResumeData`.
+2. If validation fails, the Pydantic error details are captured.
+3. Exactly one retry attempt is executed, appending the captured validation error into a corrective prompt to instruct the model to correct its mistakes.
+4. If Attempt 2 passes validation, the validated `ResumeData` is returned with HTTP 200.
+5. If Attempt 2 also fails validation, the endpoint returns `HTTP 422 Unprocessable Entity` with a clear explanation of the validation failure.
+6. A maximum of two LLM attempts is strictly enforced (no indefinite loops).
+7. Network and provider errors (429, 5xx, timeouts) are never converted into validation retries; they are handled independently by provider resilience logic.
+
+#### Prompt Ordering & Claude Prompt Caching
+The extraction system prompt places the long, fixed system instructions, extraction rules, schema definition, and input/output example at the beginning of the prompt, while the variable, dynamic resume text is positioned at the very end. This structure enables APIs supporting prompt caching (such as Anthropic Claude or Google Gemini) to identify and cache the static prompt prefix across calls. This can significantly reduce repeated input-token processing costs and reduce generation latency for high-volume extraction workloads.
+
+#### Running the Evaluation Script
+To evaluate extraction accuracy against the 20 trainer-provided fictional resumes:
+
+```bash
+uv run python scripts/eval_extract.py --provider gemini --pause 1.5
+```
+
+The script will:
+1. Load all 20 resumes from `data/resumes/` and ground truth from `data/resumes/expected.json`.
+2. Extract fields for each resume with a rate-limiting pause between requests.
+3. Compare actual values against expected ground truth across all 4 fields (`name`, `email`, `phone`, `skills`).
+4. Print a summary in the required format:
+   ```text
+   Evaluation Results
+   ------------------
+   Total resumes: 20
+   Valid responses: 19/20
+   Fields correct: 74/80
+   ```
+
+*Note on Evaluation Score:* The actual evaluation score will be documented here once the trainer provides the official 20-resume dataset and `expected.json`. Synthetic dataset substitutions are not fabricated per assignment requirements.
+
+---
+
+### 3. Document Management Endpoints
 
 - **Health Check:** `GET /health` — Returns `{"status": "ok"}`
 - **Upload Document:** `POST /documents` — Accepts `multipart/form-data` with PDF, TXT, or DOCX files up to 10 MB.
@@ -358,6 +444,7 @@ uv run pytest -v
 ```
 
 Tests cover:
+- **Resume Extraction & Structured Output (`test/test_extract.py`):** `POST /extract` endpoint, missing fields returning `null`, skills as list, `EmailStr` format validation, malformed JSON handling, validation failure followed by successful retry, double failure returning HTTP 422, prompt injection resistance, provider error status mapping, and evaluation script normalization.
 - **LLM Streaming & Extraction (`test/test_llm.py`):** Gemini & Groq streaming, token usage extraction, `x_groq` fallback, missing credentials.
 - **LLM Retry Logic (`test/test_llm_retry.py`):** Status code retries (429, 500, 503), timeout retry, non-retryable errors, max retry attempts, no retry after partial stream.
 - **Pricing & Cost Calculation (`test/test_pricing.py`):** Input-only, output-only, combined cost, negative token validation, unknown model handling, env variable overrides.
