@@ -1,0 +1,19 @@
+KARAN MALHOTRA
+Frontend Developer
+Email: karan.malhotra@example.com | Phone: +91 98111 76543
+Location: Gurugram, Haryana
+
+PROFILE
+Frontend developer with 4 years of experience creating accessible, responsive web interfaces.
+
+EXPERIENCE
+Frontend Developer | PixelCraft Labs | Mar 2022 – Present
+- Built reusable UI components with React.
+- Integrated frontend applications with REST APIs.
+- Improved page performance and accessibility.
+
+EDUCATION
+BCA | Guru Gobind Singh Indraprastha University | 2021
+
+SKILLS
+JavaScript, TypeScript, React, HTML5, CSS3, Tailwind CSS, Git, Jest

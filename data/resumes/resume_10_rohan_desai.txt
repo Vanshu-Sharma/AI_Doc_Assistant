@@ -1,0 +1,18 @@
+ROHAN DESAI
+Cybersecurity Analyst
+Email: rohan.desai@example.com | Phone: +91 98980 31245
+Location: Ahmedabad, Gujarat
+
+SUMMARY
+Entry-level cybersecurity analyst with hands-on experience in vulnerability assessment, log analysis, and security monitoring.
+
+PROJECTS
+- Reviewed sample web application logs to identify suspicious activity.
+- Performed basic vulnerability scans in a controlled lab environment.
+- Documented remediation recommendations.
+
+EDUCATION
+B.Tech, Information Technology | Gujarat Technological University | 2024
+
+SKILLS
+Linux, Networking, SIEM, Wireshark, Nmap, Vulnerability Assessment, Python, OWASP Top 10

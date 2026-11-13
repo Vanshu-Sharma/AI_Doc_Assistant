@@ -1,0 +1,19 @@
+DEV PATEL
+DevOps Engineer
+Email: dev.patel@example.com | Phone: +91 98790 54321
+Location: Vadodara, Gujarat
+
+SUMMARY
+DevOps engineer with 2 years of experience supporting CI/CD pipelines and containerized applications.
+
+EXPERIENCE
+Junior DevOps Engineer | CloudRoute Systems | Jul 2024 – Present
+- Maintained CI workflows using GitHub Actions.
+- Containerized services with Docker.
+- Assisted with deployment monitoring and incident investigation.
+
+EDUCATION
+B.E., Computer Engineering | Gujarat Technological University | 2023
+
+SKILLS
+Docker, Kubernetes, Linux, GitHub Actions, CI/CD, AWS, Bash, Terraform, Python

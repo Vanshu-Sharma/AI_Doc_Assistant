@@ -1,0 +1,19 @@
+SNEHA IYER
+Data Analyst
+Email: sneha.iyer@example.com | Phone: +91 98220 44172
+Location: Pune, Maharashtra
+
+SUMMARY
+Detail-oriented data analyst with 2.5 years of experience converting business data into actionable insights.
+
+EXPERIENCE
+Data Analyst | InsightBridge | Jun 2023 – Present
+- Built Power BI dashboards for sales and operations teams.
+- Used SQL and Python to clean and analyze datasets.
+- Presented monthly performance reports to stakeholders.
+
+EDUCATION
+B.Sc. Statistics | Savitribai Phule Pune University | 2022
+
+SKILLS
+SQL, Python, Pandas, Excel, Power BI, Tableau, Data Visualization, Statistics

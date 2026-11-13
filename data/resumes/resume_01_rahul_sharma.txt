@@ -1,0 +1,17 @@
+Rahul Sharma
+Software Developer | Jaipur, Rajasthan
+
+Professional Summary
+Python developer with experience in backend development and REST API development. Interested in building scalable applications.
+
+Contact Information
+Email: rahul.sharma@example.com
+Phone: 9876543210
+
+Technical Skills
+- Python
+- FastAPI
+- PostgreSQL
+- Docker
+- Git
+- REST APIs
