@@ -1,0 +1,19 @@
+NIKHIL JOSHI
+Financial Analyst
+Email: nikhil.joshi@example.com | Phone: +91 98230 44781
+Location: Nagpur, Maharashtra
+
+SUMMARY
+Financial analyst with 3 years of experience in budgeting, forecasting, variance analysis, and management reporting.
+
+EXPERIENCE
+Financial Analyst | Meridian Finance Group | Jun 2023 – Present
+- Prepared monthly management reports.
+- Analyzed budget-to-actual variances.
+- Maintained financial models and forecast assumptions.
+
+EDUCATION
+M.Com, Finance | Rashtrasant Tukadoji Maharaj Nagpur University | 2022
+
+SKILLS
+Financial Modeling, Excel, Power BI, Budgeting, Forecasting, Variance Analysis, SQL, Financial Reporting

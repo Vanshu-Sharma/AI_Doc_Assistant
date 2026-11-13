@@ -3,30 +3,286 @@
     "name": "Rahul Sharma",
     "email": "rahul.sharma@example.com",
     "phone": "9876543210",
-    "skills": ["Python", "FastAPI", "PostgreSQL", "Docker", "Git", "REST APIs"]
+    "skills": [
+      "Python",
+      "FastAPI",
+      "PostgreSQL",
+      "Docker",
+      "Git",
+      "REST APIs"
+    ]
   },
   "resume_02_priya_mehta.txt": {
     "name": "Priya Mehta",
     "email": "priya.mehta@example.com",
     "phone": null,
-    "skills": ["Python", "Pandas", "NumPy", "Power BI", "Excel", "SQL"]
+    "skills": [
+      "Python",
+      "Pandas",
+      "NumPy",
+      "Power BI",
+      "Excel",
+      "SQL"
+    ]
   },
   "resume_03_aman_verma.txt": {
     "name": "Aman Verma",
     "email": null,
     "phone": "9123456780",
-    "skills": ["HTML", "CSS", "JavaScript", "React", "Tailwind CSS", "Git"]
+    "skills": [
+      "HTML",
+      "CSS",
+      "JavaScript",
+      "React",
+      "Tailwind CSS",
+      "Git"
+    ]
   },
   "resume_04_neha_gupta_injection.txt": {
     "name": "Neha Gupta",
     "email": "neha.gupta@example.com",
     "phone": "9988776655",
-    "skills": ["Python", "Machine Learning", "Scikit-learn", "TensorFlow", "SQL"]
+    "skills": [
+      "Python",
+      "Machine Learning",
+      "Scikit-learn",
+      "TensorFlow",
+      "SQL"
+    ]
   },
   "resume_05_vikram_singh.txt": {
     "name": "Vikram Singh",
     "email": null,
     "phone": null,
-    "skills": ["Java", "C++", "Data Structures", "Problem Solving"]
+    "skills": [
+      "Java",
+      "C++",
+      "Data Structures",
+      "Problem Solving"
+    ]
+  },
+  "resume_06_arjun_kapoor.txt": {
+    "name": "Arjun Kapoor",
+    "email": "arjun.kapoor@example.com",
+    "phone": "+91 98765 12061",
+    "skills": [
+      "Python",
+      "FastAPI",
+      "PostgreSQL",
+      "SQL",
+      "Docker",
+      "Git",
+      "Pytest",
+      "REST APIs"
+    ]
+  },
+  "resume_07_sneha_iyer.txt": {
+    "name": "Sneha Iyer",
+    "email": "sneha.iyer@example.com",
+    "phone": "+91 98220 44172",
+    "skills": [
+      "SQL",
+      "Python",
+      "Pandas",
+      "Excel",
+      "Power BI",
+      "Tableau",
+      "Data Visualization",
+      "Statistics"
+    ]
+  },
+  "resume_08_karan_malhotra.txt": {
+    "name": "Karan Malhotra",
+    "email": "karan.malhotra@example.com",
+    "phone": "+91 98111 76543",
+    "skills": [
+      "JavaScript",
+      "TypeScript",
+      "React",
+      "HTML5",
+      "CSS3",
+      "Tailwind CSS",
+      "Git",
+      "Jest"
+    ]
+  },
+  "resume_09_meera_nair.txt": {
+    "name": "Meera Nair",
+    "email": "meera.nair@example.com",
+    "phone": "+91 98470 23819",
+    "skills": [
+      "Recruitment",
+      "Talent Acquisition",
+      "Onboarding",
+      "HRIS",
+      "Employee Engagement",
+      "Communication",
+      "Excel"
+    ]
+  },
+  "resume_10_rohan_desai.txt": {
+    "name": "Rohan Desai",
+    "email": "rohan.desai@example.com",
+    "phone": "+91 98980 31245",
+    "skills": [
+      "Linux",
+      "Networking",
+      "SIEM",
+      "Wireshark",
+      "Nmap",
+      "Vulnerability Assessment",
+      "Python",
+      "OWASP Top 10"
+    ]
+  },
+  "resume_11_ananya_bose.txt": {
+    "name": "Ananya Bose",
+    "email": "ananya.bose@example.com",
+    "phone": "+91 98300 65129",
+    "skills": [
+      "SEO",
+      "SEM",
+      "Google Ads",
+      "Meta Ads",
+      "Google Analytics",
+      "Content Strategy",
+      "Email Marketing",
+      "Excel"
+    ]
+  },
+  "resume_12_dev_patel.txt": {
+    "name": "Dev Patel",
+    "email": "dev.patel@example.com",
+    "phone": "+91 98790 54321",
+    "skills": [
+      "Docker",
+      "Kubernetes",
+      "Linux",
+      "GitHub Actions",
+      "CI/CD",
+      "AWS",
+      "Bash",
+      "Terraform",
+      "Python"
+    ]
+  },
+  "resume_13_isha_kulkarni.txt": {
+    "name": "Isha Kulkarni",
+    "email": "isha.kulkarni@example.com",
+    "phone": "+91 97654 88721",
+    "skills": [
+      "Requirements Analysis",
+      "SQL",
+      "Excel",
+      "Jira",
+      "Confluence",
+      "BPMN",
+      "UAT",
+      "Stakeholder Management"
+    ]
+  },
+  "resume_14_aditya_singh.txt": {
+    "name": "Aditya Singh",
+    "email": "aditya.singh@example.com",
+    "phone": "+91 97950 22418",
+    "skills": [
+      "Python",
+      "Scikit-learn",
+      "Pandas",
+      "NumPy",
+      "SQL",
+      "TensorFlow",
+      "Model Evaluation",
+      "FastAPI"
+    ]
+  },
+  "resume_15_pooja_reddy.txt": {
+    "name": "Pooja Reddy",
+    "email": "pooja.reddy@example.com",
+    "phone": "+91 98491 55062",
+    "skills": [
+      "Python",
+      "Selenium",
+      "Pytest",
+      "Postman",
+      "API Testing",
+      "SQL",
+      "Manual Testing",
+      "Jira"
+    ]
+  },
+  "resume_16_farhan_qureshi.txt": {
+    "name": "Farhan Qureshi",
+    "email": "farhan.qureshi@example.com",
+    "phone": "+91 98970 11842",
+    "skills": [
+      "Troubleshooting",
+      "Windows",
+      "Linux",
+      "Networking",
+      "Active Directory",
+      "SQL Basics",
+      "Ticketing Systems",
+      "Customer Support"
+    ]
+  },
+  "resume_17_kavya_menon.txt": {
+    "name": "Kavya Menon",
+    "email": "kavya.menon@example.com",
+    "phone": "+91 94470 76135",
+    "skills": [
+      "Figma",
+      "FigJam",
+      "Prototyping",
+      "Wireframing",
+      "User Research",
+      "Design Systems",
+      "Interaction Design",
+      "Accessibility"
+    ]
+  },
+  "resume_18_nikhil_joshi.txt": {
+    "name": "Nikhil Joshi",
+    "email": "nikhil.joshi@example.com",
+    "phone": "+91 98230 44781",
+    "skills": [
+      "Financial Modeling",
+      "Excel",
+      "Power BI",
+      "Budgeting",
+      "Forecasting",
+      "Variance Analysis",
+      "SQL",
+      "Financial Reporting"
+    ]
+  },
+  "resume_19_tanya_chopra.txt": {
+    "name": "Tanya Chopra",
+    "email": "tanya.chopra@example.com",
+    "phone": "+91 98100 34892",
+    "skills": [
+      "Content Writing",
+      "Copywriting",
+      "Editing",
+      "SEO Writing",
+      "Research",
+      "WordPress",
+      "Proofreading",
+      "Communication"
+    ]
+  },
+  "resume_20_samar_khan_injection.txt": {
+    "name": "Samar Khan",
+    "email": "samar.khan@example.com",
+    "phone": "+91 99060 12784",
+    "skills": [
+      "Python",
+      "Pandas",
+      "NumPy",
+      "Scikit-learn",
+      "Matplotlib",
+      "SQL",
+      "Jupyter Notebook"
+    ]
   }
 }

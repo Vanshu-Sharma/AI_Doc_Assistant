@@ -310,8 +310,12 @@ Output JSON:
 
 
 def build_extraction_prompt(resume_text: str, validation_error: str | None = None) -> str:
-    """Build extraction prompt with fixed instructions first and dynamic resume text last (for prompt caching)."""
-    prompt = EXTRACTION_SYSTEM_PROMPT.strip()
+    """Build the user-facing extraction prompt wrapping resume text in <resume> tags.
+
+    The EXTRACTION_SYSTEM_PROMPT is passed separately as the system message so the
+    model can clearly distinguish instructions (trusted) from resume data (untrusted).
+    """
+    prompt = f"<resume>\n{resume_text.strip()}\n</resume>"
 
     if validation_error:
         prompt += (
@@ -320,7 +324,6 @@ def build_extraction_prompt(resume_text: str, validation_error: str | None = Non
             "Please fix the error and ensure your response strictly complies with the JSON schema and rules above."
         )
 
-    prompt += f"\n\n### Raw Resume Text:\n{resume_text.strip()}"
     return prompt
 
 
@@ -347,8 +350,18 @@ async def _generate_structured_once(
     provider: str,
     response_schema: type[BaseModel] | None = None,
     on_usage: Callable[[TokenUsage], None] | None = None,
+    system_prompt: str | None = None,
 ) -> str:
-    """Generate a single structured LLM response using provider-native JSON mode / schema."""
+    """Generate a single structured LLM response using provider-native JSON mode / schema.
+
+    Args:
+        prompt: The user-facing prompt (resume text wrapped in <resume> tags).
+        provider: LLM provider name ("gemini" or "groq").
+        response_schema: Optional Pydantic model for structured output (Gemini).
+        on_usage: Optional callback invoked with token usage metadata after a successful response.
+        system_prompt: Optional system-level instructions sent as a separate system message,
+            keeping them distinct from the untrusted resume data in ``prompt``.
+    """
     provider_norm = provider.lower().strip()
 
     if provider_norm == "gemini":
@@ -365,6 +378,7 @@ async def _generate_structured_once(
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=response_schema,
+            system_instruction=system_prompt,
         )
 
         response = await client.aio.models.generate_content(
@@ -403,10 +417,15 @@ async def _generate_structured_once(
         if not model:
             raise ValueError("GROQ_MODEL is not configured.")
 
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
         async with AsyncGroq(api_key=api_key) as client:
             response = await client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 response_format={"type": "json_object"},
             )
 
@@ -445,6 +464,7 @@ async def generate_structured(
     provider: str,
     response_schema: type[BaseModel] | None = None,
     on_usage: Callable[[TokenUsage], None] | None = None,
+    system_prompt: str | None = None,
 ) -> str:
     """Generate a structured JSON response with timeout and network retry support."""
     provider_norm = provider.lower().strip()
@@ -457,6 +477,7 @@ async def generate_structured(
                     provider=provider_norm,
                     response_schema=response_schema,
                     on_usage=on_usage,
+                    system_prompt=system_prompt,
                 )
         except Exception as exc:
             if not is_retryable_error(exc):
@@ -494,68 +515,58 @@ async def extract_resume(
     provider: str = "gemini",
     on_usage: Callable[[TokenUsage], None] | None = None,
 ):
-    """Extract structured resume information with exactly one retry on validation failure.
+    """Extract structured resume information with exactly one validation retry.
 
-    Flow:
-    1. Send initial extraction prompt.
-    2. Receive LLM response.
-    3. Parse JSON.
-    4. Validate using ResumeData.
-    5. If validation succeeds, return result.
-    6. If validation fails, capture Pydantic validation error.
-    7. Retry LLM call once, adding validation error to corrective prompt.
-    8. Validate second response.
-    9. If validation fails again, raise ExtractionValidationError.
+    Flow (up to 2 attempts):
+    1. Build the user prompt wrapping the resume in ``<resume>`` tags.
+    2. Send the EXTRACTION_SYSTEM_PROMPT as the system message so the model can
+       clearly distinguish trusted instructions from untrusted resume data.
+    3. Parse and validate the response with ``ResumeData``.
+    4. On validation failure, include the Pydantic error in the corrective prompt
+       and retry once.
+    5. If validation fails again, raise ``ExtractionValidationError``.
     """
     from app.schema import ResumeData
 
-    # Attempt 1: Send initial extraction prompt
-    initial_prompt = build_extraction_prompt(resume_text)
-    raw_response = await generate_structured(
-        prompt=initial_prompt,
-        provider=provider,
-        response_schema=ResumeData,
-        on_usage=on_usage,
-    )
-
+    MAX_EXTRACT_ATTEMPTS = 2
     validation_err: Exception | None = None
-    try:
-        cleaned = clean_json_markdown(raw_response)
-        parsed = json.loads(cleaned)
-        if not isinstance(parsed, dict):
-            raise ValueError(f"Expected a JSON object, got {type(parsed).__name__}")
-        return ResumeData.model_validate(parsed)
-    except (json.JSONDecodeError, ValidationError, ValueError, TypeError) as err:
-        validation_err = err
-        logger.warning(
-            "Resume extraction attempt 1 validation failed: %s. Retrying once with corrective prompt.",
-            err,
+
+    for attempt in range(1, MAX_EXTRACT_ATTEMPTS + 1):
+        prompt = build_extraction_prompt(
+            resume_text=resume_text,
+            validation_error=str(validation_err) if validation_err else None,
         )
 
-    # Attempt 2: Retry once with corrective prompt containing the validation error
-    corrective_prompt = build_extraction_prompt(
-        resume_text=resume_text,
-        validation_error=str(validation_err),
-    )
-    retry_raw = await generate_structured(
-        prompt=corrective_prompt,
-        provider=provider,
-        response_schema=ResumeData,
-        on_usage=on_usage,
-    )
-
-    try:
-        cleaned_retry = clean_json_markdown(retry_raw)
-        parsed_retry = json.loads(cleaned_retry)
-        if not isinstance(parsed_retry, dict):
-            raise ValueError(f"Expected a JSON object, got {type(parsed_retry).__name__}")
-        return ResumeData.model_validate(parsed_retry)
-    except (json.JSONDecodeError, ValidationError, ValueError, TypeError) as retry_err:
-        logger.error(
-            "Resume extraction attempt 2 validation failed: %s",
-            retry_err,
+        raw_response = await generate_structured(
+            prompt=prompt,
+            provider=provider,
+            response_schema=ResumeData,
+            on_usage=on_usage,
+            system_prompt=EXTRACTION_SYSTEM_PROMPT,
         )
-        raise ExtractionValidationError(
-            f"Failed to extract valid resume data after retry: {retry_err}"
-        ) from retry_err
+
+        try:
+            cleaned = clean_json_markdown(raw_response)
+            parsed = json.loads(cleaned)
+            if not isinstance(parsed, dict):
+                raise ValueError(f"Expected a JSON object, got {type(parsed).__name__}")
+            return ResumeData.model_validate(parsed)
+        except (json.JSONDecodeError, ValidationError, ValueError, TypeError) as err:
+            validation_err = err
+            if attempt < MAX_EXTRACT_ATTEMPTS:
+                logger.warning(
+                    "Resume extraction attempt %d validation failed: %s. Retrying with corrective prompt.",
+                    attempt,
+                    err,
+                )
+            else:
+                logger.error(
+                    "Resume extraction attempt %d validation failed: %s",
+                    attempt,
+                    err,
+                )
+
+    raise ExtractionValidationError(
+        f"Failed to extract valid resume data after retry: {validation_err}"
+    ) from validation_err
 
