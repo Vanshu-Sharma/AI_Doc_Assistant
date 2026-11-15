@@ -2,21 +2,23 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
 import logging
+import os
 from pathlib import Path
 import time
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 import httpx
 from sqlmodel import Session, delete, select
 
 
 from app.database import engine, get_session
+from app.ingestion import ingest_document_pdf
 from app.llm import ExtractionValidationError, TokenUsage, extract_resume, generate
-from app.models import Document, UsageLog
+from app.models import Chunk, Document, DocumentStatus, UsageLog
 from app.pricing import calculate_cost
-from app.schema import AskRequest, ExtractRequest, ResumeData
+from app.schema import AskRequest, ChunkResponse, ExtractRequest, ResumeData
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,7 @@ app = FastAPI(title="AI Document Assistant", lifespan=lifespan)
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx"}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 MAX_SIZE = MAX_UPLOAD_BYTES
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
 
 
 class DocumentCollection:
@@ -113,6 +116,7 @@ def health():
 async def upload_document(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     filename = Path(file.filename or "").name
     extension = Path(filename).suffix.lower()
@@ -143,17 +147,41 @@ async def upload_document(
             detail="File exceeds the 10 MB limit",
         )
 
+    initial_status = (
+        DocumentStatus.PENDING if extension == ".pdf" else DocumentStatus.READY
+    )
+
     document = Document(
         id=str(uuid4()),
         filename=filename,
         content_type=file.content_type or "application/octet-stream",
         size_bytes=len(content),
         uploaded_at=datetime.now(timezone.utc),
+        status=initial_status,
     )
 
     session.add(document)
     session.commit()
     session.refresh(document)
+
+    # Save uploaded file to disk
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    saved_file_path = UPLOAD_DIR / f"{document.id}_{filename}"
+    saved_file_path.write_bytes(content)
+
+    document.file_path = str(saved_file_path)
+    session.add(document)
+    session.commit()
+    session.refresh(document)
+
+    # Schedule background ingestion for PDFs
+    if extension == ".pdf":
+        background_tasks.add_task(
+            ingest_document_pdf,
+            document_id=document.id,
+            file_path=str(saved_file_path),
+        )
+
     return document
 
 
@@ -161,6 +189,39 @@ async def upload_document(
 def list_documents(session: Session = Depends(get_session)):
     statement = select(Document)
     return session.exec(statement).all()
+
+
+@app.get("/documents/{document_id}", response_model=Document)
+def get_document(
+    document_id: str,
+    session: Session = Depends(get_session),
+):
+    doc = session.get(Document, document_id)
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document '{document_id}' not found.",
+        )
+    return doc
+
+
+@app.get("/documents/{document_id}/chunks", response_model=list[ChunkResponse])
+def get_document_chunks(
+    document_id: str,
+    session: Session = Depends(get_session),
+):
+    doc = session.get(Document, document_id)
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document '{document_id}' not found.",
+        )
+    statement = (
+        select(Chunk)
+        .where(Chunk.document_id == document_id)
+        .order_by(Chunk.chunk_index)
+    )
+    return list(session.exec(statement).all())
 
 
 @app.post("/ask")

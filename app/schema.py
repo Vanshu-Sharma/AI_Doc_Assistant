@@ -52,6 +52,20 @@ class UsageResponse(BaseModel):
     created_at: datetime
 
 
+class ChunkResponse(BaseModel):
+    """Schema for retrieved document chunk."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    document_id: str
+    filename: str
+    page_number: int
+    chunk_index: int
+    text: str
+    created_at: datetime
+
+
 class ResumeData(BaseModel):
     """Structured data extracted from a resume."""
 
