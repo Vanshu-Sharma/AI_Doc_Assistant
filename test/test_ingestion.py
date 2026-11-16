@@ -17,6 +17,7 @@ from app.ingestion import (
     EMBEDDING_DIMENSION,
     chunk_text,
     generate_embedding,
+    generate_embeddings,
     ingest_document_pdf,
     read_pdf_pages,
 )
@@ -92,6 +93,11 @@ def client_fixture(
         ingestion_module,
         "generate_embedding",
         lambda *args, **kwargs: [0.05] * EMBEDDING_DIMENSION,
+    )
+    monkeypatch.setattr(
+        ingestion_module,
+        "generate_embeddings",
+        lambda texts, *args, **kwargs: [[0.05] * EMBEDDING_DIMENSION for _ in texts],
     )
 
     client = TestClient(app)
@@ -207,6 +213,130 @@ def test_generate_embedding_unsupported_provider():
     """Verify generate_embedding raises ValueError for invalid provider."""
     with pytest.raises(ValueError, match="Unsupported embedding provider"):
         generate_embedding("text", provider="unknown_ai")
+
+
+def test_generate_embeddings_empty_list():
+    """Verify generate_embeddings returns empty list when given no texts."""
+    assert generate_embeddings([]) == []
+
+
+def test_generate_embeddings_gemini_batch(monkeypatch: pytest.MonkeyPatch):
+    """Verify batch embeddings with Gemini reuse client and preserve 1-to-1 order."""
+    monkeypatch.setenv("GEMINI_API_KEY", "mock_gemini_key")
+
+    mock_client = MagicMock()
+    mock_values_1 = [0.1] * 768
+    mock_values_2 = [0.2] * 768
+    mock_resp = MagicMock(
+        embeddings=[MagicMock(values=mock_values_1), MagicMock(values=mock_values_2)]
+    )
+    mock_client.models.embed_content.return_value = mock_resp
+
+    from google import genai
+
+    monkeypatch.setattr(genai, "Client", lambda api_key: mock_client)
+
+    results = generate_embeddings(["first chunk", "second chunk"], provider="gemini")
+    assert len(results) == 2
+    assert len(results[0]) == 768
+    assert len(results[1]) == 768
+    assert results[0][0] == pytest.approx(0.1)
+    assert results[1][0] == pytest.approx(0.2)
+    mock_client.models.embed_content.assert_called_once()
+
+
+def test_generate_embeddings_ollama_batch_api_embed(monkeypatch: pytest.MonkeyPatch):
+    """Verify batch embeddings with Ollama /api/embed endpoint."""
+    import httpx
+
+    class MockEmbedResponse:
+        status_code = 200
+
+        def json(self):
+            return {"embeddings": [[0.3] * 768, [0.4] * 768]}
+
+    def mock_post(self, url, *args, **kwargs):
+        assert "/api/embed" in url
+        return MockEmbedResponse()
+
+    monkeypatch.setattr(httpx.Client, "post", mock_post)
+
+    results = generate_embeddings(["first chunk", "second chunk"], provider="ollama")
+    assert len(results) == 2
+    assert len(results[0]) == 768
+    assert len(results[1]) == 768
+    assert results[0][0] == pytest.approx(0.3)
+    assert results[1][0] == pytest.approx(0.4)
+
+
+def test_generate_embeddings_ollama_batch_fallback(monkeypatch: pytest.MonkeyPatch):
+    """Verify Ollama fallback to /api/embeddings when /api/embed returns 404."""
+    import httpx
+
+    call_count = {"count": 0}
+
+    class Mock404Response:
+        status_code = 404
+        text = "Not Found"
+
+    class MockSingleResponse:
+        status_code = 200
+
+        def __init__(self, val):
+            self.val = val
+
+        def json(self):
+            return {"embedding": [self.val] * 768}
+
+    def mock_post(self, url, *args, **kwargs):
+        if url.endswith("/api/embed"):
+            return Mock404Response()
+        call_count["count"] += 1
+        return MockSingleResponse(0.5 * call_count["count"])
+
+    monkeypatch.setattr(httpx.Client, "post", mock_post)
+
+    results = generate_embeddings(["chunk 1", "chunk 2"], provider="ollama")
+    assert len(results) == 2
+    assert len(results[0]) == 768
+    assert len(results[1]) == 768
+    assert results[0][0] == pytest.approx(0.5)
+    assert results[1][0] == pytest.approx(1.0)
+    assert call_count["count"] == 2
+
+
+def test_generate_embeddings_dimension_mismatch(monkeypatch: pytest.MonkeyPatch):
+    """Verify ValueError is raised when embedding dimension is not 768."""
+    monkeypatch.setenv("GEMINI_API_KEY", "mock_gemini_key")
+
+    mock_client = MagicMock()
+    # Return 512 dimensions instead of 768
+    mock_resp = MagicMock(embeddings=[MagicMock(values=[0.1] * 512)])
+    mock_client.models.embed_content.return_value = mock_resp
+
+    from google import genai
+
+    monkeypatch.setattr(genai, "Client", lambda api_key: mock_client)
+
+    with pytest.raises(ValueError, match="Expected 768-dim vector"):
+        generate_embeddings(["test chunk"], provider="gemini")
+
+
+def test_generate_embeddings_provider_failure(monkeypatch: pytest.MonkeyPatch):
+    """Verify exception is propagated when provider request fails."""
+    import httpx
+
+    class MockErrorResponse:
+        status_code = 500
+        text = "Internal Server Error"
+
+    def mock_post(*args, **kwargs):
+        return MockErrorResponse()
+
+    monkeypatch.setattr(httpx.Client, "post", mock_post)
+
+    with pytest.raises(ValueError, match="Ollama embedding request failed"):
+        generate_embeddings(["test chunk"], provider="ollama")
 
 
 def test_background_ingestion_success(tmp_path: Path, session: Session):

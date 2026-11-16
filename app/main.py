@@ -129,9 +129,9 @@ def health():
 
 @app.post("/documents", response_model=Document, status_code=201)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     filename = Path(file.filename or "").name
     extension = Path(filename).suffix.lower()
