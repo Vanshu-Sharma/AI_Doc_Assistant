@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 class AskRequest(BaseModel):
@@ -64,6 +64,27 @@ class ChunkResponse(BaseModel):
     chunk_index: int
     text: str
     created_at: datetime
+
+
+class SearchResult(BaseModel):
+    """Schema for document search result item."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    text: str = Field(description="Clean text content of the matching chunk")
+    filename: str = Field(description="Source document filename")
+    page: int = Field(description="1-based page number where chunk occurs")
+    page_number: int | None = Field(
+        default=None,
+        description="Alias for page number",
+    )
+    score: float = Field(description="Cosine similarity score (higher is more relevant)")
+
+    @model_validator(mode="after")
+    def sync_page_number(self) -> "SearchResult":
+        if self.page_number is None:
+            self.page_number = self.page
+        return self
 
 
 class ResumeData(BaseModel):

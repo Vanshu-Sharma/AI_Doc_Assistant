@@ -7,18 +7,33 @@ from pathlib import Path
 import time
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 import httpx
 from sqlmodel import Session, delete, select
 
 
 from app.database import engine, get_session
-from app.ingestion import ingest_document_pdf
+from app.ingestion import ingest_document_pdf, search_similar_chunks
 from app.llm import ExtractionValidationError, TokenUsage, extract_resume, generate
 from app.models import Chunk, Document, DocumentStatus, UsageLog
 from app.pricing import calculate_cost
-from app.schema import AskRequest, ChunkResponse, ExtractRequest, ResumeData
+from app.schema import (
+    AskRequest,
+    ChunkResponse,
+    ExtractRequest,
+    ResumeData,
+    SearchResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +237,61 @@ def get_document_chunks(
         .order_by(Chunk.chunk_index)
     )
     return list(session.exec(statement).all())
+
+
+@app.get(
+    "/search",
+    response_model=list[SearchResult],
+    status_code=status.HTTP_200_OK,
+    summary="Search Document Chunks",
+    description=(
+        "Find document text chunks that best match a question using pgvector cosine "
+        "distance (<=>). Returns the top-k closest chunks, ordered by relevance."
+    ),
+    tags=["Search"],
+)
+def search_documents(
+    q: str = Query(..., min_length=1, description="Search query string"),
+    k: int = Query(default=5, ge=1, le=50, description="Maximum number of results to return"),
+    session: Session = Depends(get_session),
+) -> list[SearchResult]:
+    """Search ingested chunks using pgvector cosine distance operator <=>."""
+    cleaned_q = q.strip()
+    if not cleaned_q:
+        raise HTTPException(
+            status_code=422,
+            detail="The 'q' search query cannot be empty or whitespace.",
+        )
+
+    try:
+        matches = search_similar_chunks(
+            query_text=cleaned_q,
+            k=k,
+            session=session,
+        )
+    except ValueError as exc:
+        logger.error("Search configuration error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.error("Search processing failure: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Search service error: {exc}",
+        ) from exc
+
+    return [
+        SearchResult(
+            text=chunk.text,
+            filename=chunk.filename,
+            page=chunk.page_number,
+            page_number=chunk.page_number,
+            score=score,
+        )
+        for chunk, score in matches
+    ]
 
 
 @app.post("/ask")
