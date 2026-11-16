@@ -19,7 +19,6 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY app/ ./app/
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
-COPY README.md ./
 
 # Ensure virtualenv binaries are used
 ENV PATH="/app/.venv/bin:$PATH"
