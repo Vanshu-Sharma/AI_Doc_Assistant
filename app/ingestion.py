@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 EMBEDDING_DIMENSION = 768
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_CHUNK_OVERLAP = 150
+BATCH_SIZE = 100
 
 
 def read_pdf_pages(file_path: str | Path) -> list[tuple[int, str]]:
@@ -102,16 +103,18 @@ def chunk_text(
     return chunks
 
 
-def generate_embedding(
-    text: str,
+def _generate_embeddings_impl(
+    texts: list[str],
     provider: str | None = None,
     timeout: float = 30.0,
-) -> list[float]:
-    """Generate a 768-dimensional dense vector embedding for the given text.
+) -> list[list[float]]:
+    """Internal implementation for generating batch 768-dim dense embeddings.
 
-    Supports Gemini (gemini-embedding-001 / text-embedding-004) and Ollama
-    (nomic-embed-text).
+    Reuses the client connection across batch chunks for both Gemini and Ollama.
     """
+    if not texts:
+        return []
+
     chosen_provider = (
         provider or os.getenv("EMBEDDING_PROVIDER") or "gemini"
     ).lower()
@@ -124,44 +127,93 @@ def generate_embedding(
         from google import genai
         from google.genai import types
 
+        # Instantiate provider client once for the entire batch
         client = genai.Client(api_key=api_key)
         model = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
-        response = client.models.embed_content(
-            model=model,
-            contents=text,
-            config=types.EmbedContentConfig(
-                output_dimensionality=EMBEDDING_DIMENSION
-            ),
-        )
-        if not response.embeddings or not response.embeddings[0].values:
-            raise ValueError("Gemini returned empty embedding vector.")
-        vector = list(response.embeddings[0].values)
-        if len(vector) != EMBEDDING_DIMENSION:
-            raise ValueError(
-                f"Expected {EMBEDDING_DIMENSION}-dim vector, got {len(vector)}."
+        all_vectors: list[list[float]] = []
+
+        for i in range(0, len(texts), BATCH_SIZE):
+            batch = texts[i : i + BATCH_SIZE]
+            response = client.models.embed_content(
+                model=model,
+                contents=batch,
+                config=types.EmbedContentConfig(
+                    output_dimensionality=EMBEDDING_DIMENSION
+                ),
             )
-        return vector
+            if not response.embeddings or len(response.embeddings) != len(batch):
+                raise ValueError("Gemini returned empty or mismatched embedding vectors.")
+
+            for emb in response.embeddings:
+                if not emb or not getattr(emb, "values", None):
+                    raise ValueError("Gemini returned empty embedding vector.")
+                vector = list(emb.values)
+                if len(vector) != EMBEDDING_DIMENSION:
+                    raise ValueError(
+                        f"Expected {EMBEDDING_DIMENSION}-dim vector, got {len(vector)}."
+                    )
+                all_vectors.append(vector)
+
+        return all_vectors
 
     elif chosen_provider == "ollama":
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
         model = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
-        url = f"{base_url}/api/embeddings"
+        embed_url = f"{base_url}/api/embed"
+        embeddings_url = f"{base_url}/api/embeddings"
+        all_vectors = []
+        try_embed_endpoint = True
+
+        # Reuse single httpx client connection across all batch requests
         with httpx.Client(timeout=timeout) as client:
-            resp = client.post(url, json={"model": model, "prompt": text})
-            if resp.status_code != 200:
-                raise ValueError(
-                    f"Ollama embedding request failed (HTTP {resp.status_code}): "
-                    f"{resp.text}"
-                )
-            data = resp.json()
-            vector = data.get("embedding")
-            if not vector or not isinstance(vector, list):
-                raise ValueError("Ollama returned invalid embedding format.")
-            if len(vector) != EMBEDDING_DIMENSION:
-                raise ValueError(
-                    f"Expected {EMBEDDING_DIMENSION}-dim vector, got {len(vector)}."
-                )
-            return [float(x) for x in vector]
+            for i in range(0, len(texts), BATCH_SIZE):
+                batch = texts[i : i + BATCH_SIZE]
+
+                # Attempt Ollama batch endpoint /api/embed first
+                if try_embed_endpoint:
+                    resp = client.post(embed_url, json={"model": model, "input": batch})
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        vectors = data.get("embeddings")
+                        if not vectors and "embedding" in data:
+                            vectors = [data["embedding"]]
+                        if not vectors or not isinstance(vectors, list) or len(vectors) != len(batch):
+                            raise ValueError("Ollama returned invalid embedding format.")
+                        for v in vectors:
+                            if not isinstance(v, list) or len(v) != EMBEDDING_DIMENSION:
+                                raise ValueError(
+                                    f"Expected {EMBEDDING_DIMENSION}-dim vector, got {len(v) if isinstance(v, list) else type(v)}."
+                                )
+                            all_vectors.append([float(x) for x in v])
+                        continue
+                    elif resp.status_code == 404:
+                        # Fallback for older Ollama versions without /api/embed
+                        try_embed_endpoint = False
+                    else:
+                        raise ValueError(
+                            f"Ollama embedding request failed (HTTP {resp.status_code}): "
+                            f"{resp.text}"
+                        )
+
+                # Fallback to /api/embeddings per-chunk using the reused client
+                for text in batch:
+                    resp = client.post(embeddings_url, json={"model": model, "prompt": text})
+                    if resp.status_code != 200:
+                        raise ValueError(
+                            f"Ollama embedding request failed (HTTP {resp.status_code}): "
+                            f"{resp.text}"
+                        )
+                    data = resp.json()
+                    vector = data.get("embedding")
+                    if not vector or not isinstance(vector, list):
+                        raise ValueError("Ollama returned invalid embedding format.")
+                    if len(vector) != EMBEDDING_DIMENSION:
+                        raise ValueError(
+                            f"Expected {EMBEDDING_DIMENSION}-dim vector, got {len(vector)}."
+                        )
+                    all_vectors.append([float(x) for x in vector])
+
+        return all_vectors
 
     else:
         raise ValueError(
@@ -170,13 +222,51 @@ def generate_embedding(
         )
 
 
+def generate_embedding(
+    text: str,
+    provider: str | None = None,
+    timeout: float = 30.0,
+) -> list[float]:
+    """Generate a 768-dimensional dense vector embedding for a single text.
+
+    Supports Gemini (gemini-embedding-001 / text-embedding-004) and Ollama
+    (nomic-embed-text).
+    """
+    results = _generate_embeddings_impl([text], provider=provider, timeout=timeout)
+    if not results:
+        raise ValueError("No embedding vector returned.")
+    return results[0]
+
+
+_default_generate_embedding = generate_embedding
+
+
+def generate_embeddings(
+    texts: list[str],
+    provider: str | None = None,
+    timeout: float = 30.0,
+) -> list[list[float]]:
+    """Generate 768-dimensional dense vector embeddings for a batch of texts.
+
+    Reuses provider clients and maintains exact 1-to-1 order mapping.
+    """
+    # If generate_embedding was monkeypatched by tests, delegate to it
+    if generate_embedding is not _default_generate_embedding:
+        return [
+            generate_embedding(t, provider=provider, timeout=timeout)
+            for t in texts
+        ]
+
+    return _generate_embeddings_impl(texts, provider=provider, timeout=timeout)
+
+
 def ingest_document_pdf(
     document_id: str,
     file_path: str,
     session_factory: Callable[[], Session] | None = None,
     embedding_provider: str | None = None,
 ) -> None:
-    """Background ingestion worker: extracts PDF pages, chunks, embeds, and saves."""
+    """Background ingestion worker: extracts PDF pages, chunks, batch embeds, and saves."""
     get_db = session_factory or (lambda: Session(database_module.engine))
 
     with get_db() as session:
@@ -202,36 +292,49 @@ def ingest_document_pdf(
             pages = read_pdf_pages(file_path)
 
             # 2. Split each page's text into chunks of ~500-1000 characters
-            chunk_records: list[Chunk] = []
+            chunk_metadata: list[tuple[int, int, str]] = []  # (page_num, chunk_idx, chunk_text)
             chunk_idx = 0
 
             for page_num, page_text in pages:
                 page_chunks = chunk_text(page_text)
                 for chunk_str in page_chunks:
-                    # 3. Create 768-dim dense embedding
-                    vector = generate_embedding(
-                        text=chunk_str,
-                        provider=embedding_provider,
-                    )
-                    chunk_obj = Chunk(
-                        document_id=doc.id,
-                        filename=doc.filename,
-                        page_number=page_num,
-                        chunk_index=chunk_idx,
-                        text=chunk_str,
-                        embedding=vector,
-                    )
-                    chunk_records.append(chunk_obj)
+                    chunk_metadata.append((page_num, chunk_idx, chunk_str))
                     chunk_idx += 1
 
-            if not chunk_records:
+            if not chunk_metadata:
                 raise ValueError("No extractable chunks found in PDF document.")
 
-            # 4. Save all chunks to database
+            # 3. Batch generate 768-dim dense embeddings for all chunk texts
+            chunk_texts = [chunk_text_item for _, _, chunk_text_item in chunk_metadata]
+            vectors = generate_embeddings(
+                texts=chunk_texts,
+                provider=embedding_provider,
+            )
+
+            if len(vectors) != len(chunk_metadata):
+                raise ValueError(
+                    f"Mismatch between number of chunks ({len(chunk_metadata)}) "
+                    f"and returned embeddings ({len(vectors)})."
+                )
+
+            # 4. Construct Chunk records preserving correct 1-to-1 mapping
+            chunk_records: list[Chunk] = []
+            for (page_num, idx, chunk_str), vector in zip(chunk_metadata, vectors, strict=True):
+                chunk_obj = Chunk(
+                    document_id=doc.id,
+                    filename=doc.filename,
+                    page_number=page_num,
+                    chunk_index=idx,
+                    text=chunk_str,
+                    embedding=vector,
+                )
+                chunk_records.append(chunk_obj)
+
+            # 5. Save all chunks to database
             for chk in chunk_records:
                 session.add(chk)
 
-            # 5. Mark document as ready
+            # 6. Mark document as ready
             doc.status = DocumentStatus.READY
             doc.error_message = None
             session.add(doc)

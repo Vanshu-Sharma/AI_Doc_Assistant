@@ -9,7 +9,6 @@ dependencies = [
     "google-genai>=2.34.0",
     "groq>=1.7.0",
     "pgvector>=0.5.1",
-    "psycopg2-binary>=2.9.13",
     "psycopg[binary]>=3.3.6",
     "pymupdf>=2.1",
     "python-dotenv>=1.2.4",
