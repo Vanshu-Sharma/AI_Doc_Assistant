@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 import pymupdf
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 import app.database as database_module
 from app.models import Chunk, Document, DocumentStatus
@@ -361,3 +361,73 @@ def ingest_document_pdf(
                 refreshed_doc.error_message = str(exc)
                 session.add(refreshed_doc)
                 session.commit()
+
+
+def compute_cosine_distance(vec1: list[float], vec2: list[float]) -> float:
+    """Compute cosine distance between two dense vectors in Python."""
+    import math
+
+    dot = sum(a * b for a, b in zip(vec1, vec2))
+    norm1 = math.sqrt(sum(a * a for a in vec1))
+    norm2 = math.sqrt(sum(b * b for b in vec2))
+    if norm1 == 0 or norm2 == 0:
+        return 1.0
+    similarity = dot / (norm1 * norm2)
+    return max(0.0, min(2.0, 1.0 - similarity))
+
+
+def search_similar_chunks(
+    query_text: str,
+    k: int,
+    session: Session,
+    provider: str | None = None,
+) -> list[tuple[Chunk, float]]:
+    """Generate query embedding and find top-k closest chunks using cosine distance.
+
+    Returns:
+        List of tuples: (Chunk, cosine_similarity_score) ordered closest first.
+    """
+    # 1. Return empty list if no documents are ready
+    ready_docs = session.exec(
+        select(Document.id).where(Document.status == DocumentStatus.READY)
+    ).first()
+    if not ready_docs:
+        return []
+
+    # 2. Generate embedding with the same model
+    query_vector = generate_embedding(query_text, provider=provider)
+
+    # 3. Detect database dialect
+    bind = session.get_bind()
+    is_postgres = getattr(bind.dialect, "name", "") == "postgresql"
+
+    if is_postgres:
+        # Native pgvector cosine distance operator <=>
+        distance_expr = Chunk.embedding.cosine_distance(query_vector)
+        statement = (
+            select(Chunk, distance_expr.label("distance"))
+            .join(Document, Document.id == Chunk.document_id)
+            .where(Document.status == DocumentStatus.READY)
+            .order_by(distance_expr.asc())
+            .limit(k)
+        )
+        rows = session.exec(statement).all()
+        return [(chunk, round(float(1.0 - dist), 4)) for chunk, dist in rows]
+    else:
+        # In-memory SQLite fallback for unit/integration tests
+        chunks = session.exec(
+            select(Chunk)
+            .join(Document, Document.id == Chunk.document_id)
+            .where(Document.status == DocumentStatus.READY)
+        ).all()
+
+        scored: list[tuple[Chunk, float, float]] = []
+        for chunk in chunks:
+            dist = compute_cosine_distance(query_vector, chunk.embedding)
+            sim = round(float(1.0 - dist), 4)
+            scored.append((chunk, dist, sim))
+
+        # Closest first (lowest distance)
+        scored.sort(key=lambda item: item[1])
+        top_k = scored[:k]
+        return [(chunk, sim) for chunk, _, sim in top_k]
