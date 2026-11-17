@@ -1,0 +1,19 @@
+ISHA KULKARNI
+Business Analyst
+Email: isha.kulkarni@example.com | Phone: +91 97654 88721
+Location: Mumbai, Maharashtra
+
+PROFILE
+Business analyst with 5 years of experience gathering requirements and translating business needs into functional specifications.
+
+EXPERIENCE
+Business Analyst | Northstar Consulting | Apr 2021 – Present
+- Facilitated stakeholder interviews and requirement workshops.
+- Prepared user stories, process maps, and acceptance criteria.
+- Supported UAT and release planning.
+
+EDUCATION
+MBA, Business Analytics | University of Mumbai | 2020
+
+SKILLS
+Requirements Analysis, SQL, Excel, Jira, Confluence, BPMN, UAT, Stakeholder Management

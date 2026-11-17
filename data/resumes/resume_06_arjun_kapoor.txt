@@ -1,0 +1,19 @@
+ARJUN KAPOOR
+Software Engineer
+Email: arjun.kapoor@example.com | Phone: +91 98765 12061
+Location: Jaipur, Rajasthan
+
+PROFESSIONAL SUMMARY
+Software engineer with 3 years of experience building backend services and web applications. Skilled in Python, FastAPI, PostgreSQL, Docker, and REST API development.
+
+EXPERIENCE
+Software Engineer | BluePeak Technologies | Jan 2024 – Present
+- Developed REST APIs using FastAPI and PostgreSQL.
+- Improved API response times through query optimization.
+- Added automated tests using Pytest.
+
+EDUCATION
+B.Tech, Computer Science | Rajasthan Technical University | 2023
+
+SKILLS
+Python, FastAPI, PostgreSQL, SQL, Docker, Git, Pytest, REST APIs

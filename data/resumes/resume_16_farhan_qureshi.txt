@@ -1,0 +1,19 @@
+FARHAN QURESHI
+Technical Support Engineer
+Email: farhan.qureshi@example.com | Phone: +91 98970 11842
+Location: Noida, Uttar Pradesh
+
+SUMMARY
+Technical support engineer with 2 years of experience troubleshooting software, networking, and account-access issues.
+
+EXPERIENCE
+Technical Support Engineer | HelpDeskOne | Nov 2023 – Present
+- Resolved customer issues through ticketing workflows.
+- Diagnosed basic connectivity and application errors.
+- Created knowledge-base articles for recurring problems.
+
+EDUCATION
+B.Sc. Computer Science | Jamia Millia Islamia | 2023
+
+SKILLS
+Troubleshooting, Windows, Linux, Networking, Active Directory, SQL Basics, Ticketing Systems, Customer Support

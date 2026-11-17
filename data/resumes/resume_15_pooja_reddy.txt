@@ -1,0 +1,19 @@
+POOJA REDDY
+QA Automation Engineer
+Email: pooja.reddy@example.com | Phone: +91 98491 55062
+Location: Hyderabad, Telangana
+
+SUMMARY
+QA automation engineer with 3 years of experience designing test cases and automating web application testing.
+
+EXPERIENCE
+QA Engineer | TestOrbit Technologies | Sep 2023 – Present
+- Developed automated browser tests using Selenium and Python.
+- Executed regression and API testing.
+- Reported defects and collaborated with developers on fixes.
+
+EDUCATION
+B.Tech, Electronics and Communication Engineering | JNTU Hyderabad | 2022
+
+SKILLS
+Python, Selenium, Pytest, Postman, API Testing, SQL, Manual Testing, Jira

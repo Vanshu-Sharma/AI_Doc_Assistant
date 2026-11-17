@@ -17,11 +17,19 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application code
 COPY app/ ./app/
-COPY README.md ./
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
 
 # Ensure virtualenv binaries are used
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Create non-root user and prepare uploads directory
+RUN useradd -u 1000 -m -s /bin/bash appuser && \
+    mkdir -p /app/uploads && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

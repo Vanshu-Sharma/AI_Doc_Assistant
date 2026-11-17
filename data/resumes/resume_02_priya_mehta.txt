@@ -1,0 +1,19 @@
+Priya Mehta
+Data Analyst | Mumbai, India
+
+About Me
+Recent graduate interested in data analytics, business intelligence and data visualization.
+
+Contact
+Email: priya.mehta@example.com
+
+Skills
+- Python
+- Pandas
+- NumPy
+- Power BI
+- Excel
+- SQL
+
+Education
+B.Sc. Statistics

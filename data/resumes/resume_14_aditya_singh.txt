@@ -1,0 +1,19 @@
+ADITYA SINGH
+Machine Learning Engineer
+Email: aditya.singh@example.com | Phone: +91 97950 22418
+Location: Lucknow, Uttar Pradesh
+
+SUMMARY
+Machine learning engineer with 2 years of experience developing and evaluating predictive models.
+
+EXPERIENCE
+ML Engineer | VectorSpring AI | May 2024 – Present
+- Prepared training datasets using Python and Pandas.
+- Trained classification models and evaluated precision and recall.
+- Collaborated on model deployment through REST endpoints.
+
+EDUCATION
+M.Tech, Artificial Intelligence | Indian Institute of Information Technology, Lucknow | 2024
+
+SKILLS
+Python, Scikit-learn, Pandas, NumPy, SQL, TensorFlow, Model Evaluation, FastAPI

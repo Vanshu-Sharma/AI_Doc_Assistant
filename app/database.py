@@ -2,9 +2,9 @@ import logging
 import os
 import socket
 import time
-from sqlalchemy.engine import make_url
 
 from dotenv import load_dotenv
+from sqlalchemy.engine import make_url
 from sqlmodel import Session, SQLModel, create_engine
 
 # Load environment variables from .env file
@@ -22,8 +22,8 @@ def get_resolved_database_url() -> str:
 
     parsed = make_url(url)
 
-    # Resolve Docker service hostname
-    if parsed.host == "db":
+    # Resolve Docker service hostname when running locally outside Docker
+    if parsed.host == "db" and not os.path.exists("/.dockerenv"):
         try:
             socket.gethostbyname("db")
         except socket.gaierror:

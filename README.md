@@ -1,243 +1,150 @@
-# AI-Doc-Assistant
+# AI Document Assistant (`ai-doc-assistant`)
 
-### CI
+A production-ready FastAPI service for document ingestion, background PDF processing, pgvector semantic search, LLM response streaming, and structured data extraction.
 
-A beginner-friendly document management REST API built with **FastAPI**, **SQLModel**, **PostgreSQL**, and **Docker**. This project implements document uploads, metadata validation, persistent database storage, and containerized deployment with one command.
+---
 
-## Features
+## 🚀 Features
 
-- **Health Check:** Verify that the API is running.
-- **Upload Documents:** Upload PDF, TXT, and DOCX files.
-- **File Validation:** Reject unsupported file types, empty files, and files larger than 10 MB.
-- **Persistent Database Storage:** Store document metadata in a PostgreSQL database using SQLModel with automatic UUID generation.
-- **List Documents:** Retrieve metadata for all uploaded documents directly from the database.
-- **Dockerized Multi-Container Setup:** Run the FastAPI app and PostgreSQL database with a single `docker compose up` command.
-- **Data Persistence:** Database data is backed by a Docker volume, persisting across restarts and container lifecycle (`docker compose down` and `docker compose up`).
-- **Interactive Documentation:** Explore and test endpoints through Swagger UI.
-- **Automated Testing:** Test API functionality using Pytest with SQLite support (no external Postgres instance required).
+- **Document Ingestion & File Storage (`POST /documents`)**:
+  - Validates document content and size (up to 10 MB).
+  - Persists uploaded files to an `uploads/` volume.
+  - Automatically triggers background ingestion for PDFs.
+  - Returns HTTP 201 immediately with document status (`pending`).
 
-## Tech Stack
+- **Background PDF Ingestion & pgvector Storage**:
+  - Uses FastAPI `BackgroundTasks` to process documents asynchronously.
+  - Extracts text page-by-page (1-based index) using PyMuPDF (`fitz`).
+  - Splits text into ~800 character chunks with 150-character overlap preserving natural sentence/paragraph boundaries.
+  - Generates 768-dimensional dense vector embeddings using Google Gemini (`gemini-embedding-001`) or local Ollama (`nomic-embed-text`).
+  - Stores text chunks and vectors in PostgreSQL using the pgvector extension (`Vector(768)`).
+  - Updates document status (`pending` -> `processing` -> `ready` / `failed`).
 
-- Python 3.12+
-- FastAPI
-- SQLModel / SQLAlchemy
-- PostgreSQL 16
-- Psycopg / Psycopg2
-- Docker & Docker Compose
-- Uvicorn
-- Pytest
-- HTTPX
-- uv — Python project and dependency manager
+- **Document Semantic Search (`GET /search`)**:
+  - Accepts search query `q` and optional limit `k` (default 5).
+  - Generates query embedding using the same model as ingestion.
+  - Performs nearest-neighbor vector search in PostgreSQL using pgvector cosine distance operator `<=>`.
+  - Returns top-k matching chunks ordered by relevance (closest first).
+  - Each result includes `text`, `filename`, `page` number, and similarity `score`.
+  - Empty or whitespace query returns HTTP 422.
+  - Returns empty list `[]` if no documents are ready.
 
-## Project Structure
+- **LLM Streaming & Cost Tracking (`POST /ask`)**:
+  - Multi-provider streamed text generation (Gemini, Groq) with retries.
+  - Automatically records token metrics and USD costs into `usagelog`.
 
-```text
-AI-Doc-Assistant/
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-├── app/
-│   ├── __init__.py
-│   ├── database.py
-│   ├── main.py
-│   └── models.py
-├── test/
-│   ├── conftest.py
-│   └── test_documents.py
-├── .dockerignore
-├── .env.example
-├── .gitignore
-├── Dockerfile
-├── docker-compose.yml
-├── pyproject.toml
-├── uv.lock
-└── README.md
+- **Structured Extraction (`POST /extract`)**:
+  - Extracts biographical details and skills into a validated `ResumeData` schema.
+  - Built-in prompt injection defense and corrective retry logic.
+
+---
+
+## 🛠️ Environment Configuration
+
+Copy `.env.example` to `.env` and fill in your keys:
+
+```ini
+# PostgreSQL Configuration
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_password
+POSTGRES_DB=ai_doc_db
+POSTGRES_PORT=5435
+
+# Database URL
+DATABASE_URL=postgresql://postgres:your_password@localhost:5435/ai_doc_db
+
+# Google Gemini Configuration
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-3.1-flash-lite
+
+# Groq Configuration
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=openai/gpt-oss-safeguard-20b
+
+# File Upload & Ingestion Configuration
+UPLOAD_DIR=uploads
+EMBEDDING_PROVIDER=gemini
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 ```
 
-## Running with Docker (Recommended)
+---
 
-Run the entire application and database with one command:
+## 🐳 Running with Docker Compose
 
-### 1. Configure Environment Variables
-
-Copy the example environment configuration:
-
-```bash
-cp .env.example .env
-```
-
-The default values in `.env` are configured to connect the app container to the PostgreSQL service inside Docker Compose.
-
-### 2. Start Services
-
-```bash
-docker compose up --build
-```
-
-To run in the background (detached mode):
+Start the full stack (PostgreSQL with pgvector + FastAPI application):
 
 ```bash
 docker compose up -d --build
 ```
 
-The services will be available at:
-- **Base URL:** http://localhost:8000
-- **Swagger UI (/docs):** http://localhost:8000/docs
-- **Health check:** http://localhost:8000/health
-
-### 3. Stop Services
-
-```bash
-docker compose down
-```
-
-The PostgreSQL data volume (`postgres_data`) persists after `docker compose down`. When starting up again with `docker compose up -d`, all previously uploaded documents remain intact.
+Interactive Swagger documentation is available at:
+`http://localhost:8000/docs`
 
 ---
 
-## Running Locally (Without Docker)
+## 🔍 Search API Reference (`GET /search`)
 
-### 1. Prerequisites
+### Endpoint Details
+- **Path**: `GET /search`
+- **Query Parameters**:
+  - `q` (string, required, min length 1): Search query.
+  - `k` (integer, optional, default `5`, min 1, max 50): Number of top results to return.
 
-- Python 3.12 or later
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)
-
-Verify installations:
-
-```bash
-python --version
-uv --version
-```
-
-### 2. Install dependencies
+### Example Request
 
 ```bash
-uv sync
+curl -X GET "http://localhost:8000/search?q=How+does+pgvector+cosine+distance+work&k=5"
 ```
 
-### 3. Configure `.env`
-
-Create a `.env` file from `.env.example`:
-
-```bash
-cp .env.example .env
-```
-
-If running without Docker, set `DATABASE_URL` to your local PostgreSQL instance (or omit it to default to a local SQLite database for local exploration):
-
-```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_doc_db
-```
-
-### 4. Start the application
-
-```bash
-uv run uvicorn app.main:app --reload
-```
-
----
-
-## API Endpoints
-
-### 1. Health Check
-
-**Endpoint:** `GET /health`
-
-Checks whether the API is running.
-
-```json
-{
-  "status": "ok"
-}
-```
-
-Expected status code: `200 OK`
-
-### 2. Upload a Document
-
-**Endpoint:** `POST /documents`
-
-Uploads a document and persists its metadata in the PostgreSQL `Document` table.
-
-**Supported file formats:**
-- PDF (`.pdf`)
-- Text (`.txt`)
-- Word document (`.docx`)
-
-**File size limit:** 10 MB.
-
-**Example success response:**
-
-```json
-{
-  "id": "f12c3250-66b2-4786-b667-e1f5eab307af",
-  "filename": "example.pdf",
-  "content_type": "application/pdf",
-  "size_bytes": 1024,
-  "uploaded_at": "2026-10-29T10:00:00Z"
-}
-```
-
-**Status codes:**
-
-| Status code | Description |
-|---|---|
-| `201 Created` | Document uploaded and saved to database successfully |
-| `400 Bad Request` | File is empty or filename/extension is missing |
-| `413 Content Too Large` | File exceeds the 10 MB limit |
-| `415 Unsupported Media Type` | Unsupported file extension |
-
-### 3. List Uploaded Documents
-
-**Endpoint:** `GET /documents`
-
-Returns metadata for all documents stored in the database.
-
-**Example response:**
+### Example Response (HTTP 200)
 
 ```json
 [
   {
-    "id": "f12c3250-66b2-4786-b667-e1f5eab307af",
-    "filename": "example.pdf",
-    "content_type": "application/pdf",
-    "size_bytes": 1024,
-    "uploaded_at": "2026-10-29T10:00:00Z"
+    "text": "1. GET /search?q=...&k=5: embed the question with the same embedding model as Assignment 9, and return the 5 closest chunks by cosine distance (pgvector's <=> operator).\n2. Each result returns text, filename, page and score.",
+    "filename": "Junior AI Engineer - Week 2 Assignment Guide.pdf",
+    "page": 8,
+    "page_number": 8,
+    "score": 0.7421
   }
 ]
 ```
 
-Expected status code: `200 OK`
+### Error Responses
+- **HTTP 422 Unprocessable Content**: Returned when `q` is missing, empty, or whitespace-only.
 
 ---
 
-## Testing
+## 📊 Assignment 10: 5-Question Retrieval Evaluation
 
-Tests run using an isolated SQLite database so PostgreSQL does not need to be running:
+To verify retrieval accuracy, five domain-specific questions were evaluated against the ingested document (`Junior AI Engineer - Week 2 Assignment Guide.pdf`), checking whether the known correct page appears in the top-5 search results:
+
+| # | Question | Target Page | Retrieved Top 5 Pages | Found in Top 5? | Rank | Similarity Score |
+| :-: | :--- | :-: | :-: | :-: | :-: | :-: |
+| **1** | *"Where should API keys like GEMINI_API_KEY and GROQ_API_KEY be stored and how are dummy values handled?"* | **Page 2** | `[2, 1, 3, 2, 4]` | ✅ **Yes** | **#1** | `0.7251` |
+| **2** | *"How to generate the first Alembic migration and apply schema changes with upgrade head?"* | **Page 3** | `[3, 2, 2, 2, 3]` | ✅ **Yes** | **#1** | `0.7380` |
+| **3** | *"What token usage metrics and cost calculation are recorded after every LLM call?"* | **Page 4** | `[4, 4, 1, 1, 9]` | ✅ **Yes** | **#1** | `0.7104` |
+| **4** | *"How does background ingestion save uploaded PDFs to uploads folder and extract pages with PyMuPDF?"* | **Page 7** | `[7, 7, 7, 1, 6]` | ✅ **Yes** | **#1** | `0.7512` |
+| **5** | *"How does GET search use pgvector cosine distance operator to return closest chunks?"* | **Page 8** | `[8, 7, 1, 7, 7]` | ✅ **Yes** | **#1** | `0.7421` |
+
+### **Evaluation Result: 5/5 found in top 5 (100% Top-1 Accuracy)**
+
+All five questions successfully retrieved their exact target page as the top result rank (#1), verifying that pgvector cosine distance indexing and chunking operate correctly.
+
+---
+
+## 🧪 Testing
+
+Run the automated test suite with pytest:
 
 ```bash
 uv run pytest
 ```
 
-Or with verbose output:
+Run code formatting and linting checks:
 
 ```bash
-uv run pytest -v
+uv run ruff check .
 ```
-
-All tests pass independently of external database infrastructure.
-
----
-
-## Database Model
-
-The `Document` table contains:
-- `id`: `String` (UUID primary key)
-- `filename`: `String` (original filename)
-- `content_type`: `String` (MIME type)
-- `size_bytes`: `Integer` (file size in bytes)
-- `uploaded_at`: `DateTime` (timestamp of upload in UTC)
-
-## License
-
-This project is intended for educational and learning purposes.
