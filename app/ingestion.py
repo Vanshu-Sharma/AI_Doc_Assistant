@@ -403,12 +403,12 @@ def search_similar_chunks(
 
     if is_postgres:
         # Native pgvector cosine distance operator <=>
-        distance_col = Chunk.embedding.cosine_distance(query_vector).label("distance")
+        distance_expr = Chunk.embedding.cosine_distance(query_vector)
         statement = (
-            select(Chunk, distance_col)
+            select(Chunk, distance_expr.label("distance"))
             .join(Document, Document.id == Chunk.document_id)
             .where(Document.status == DocumentStatus.READY)
-            .order_by(Chunk.embedding.cosine_distance(query_vector).asc())
+            .order_by(distance_expr.asc())
             .limit(k)
         )
         rows = session.exec(statement).all()

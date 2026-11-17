@@ -276,10 +276,10 @@ def search_documents(
             detail=str(exc),
         ) from exc
     except Exception as exc:
-        logger.error("Search processing failure: %s", exc, exc_info=True)
+        logger.exception("Search processing failure: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Search service error: {exc}",
+            detail="Search service error. Please try again later.",
         ) from exc
 
     return [
