@@ -24,7 +24,14 @@ from sqlmodel import Session, delete, select
 
 from app.database import engine, get_session
 from app.ingestion import ingest_document_pdf, search_similar_chunks
-from app.llm import ExtractionValidationError, TokenUsage, extract_resume, generate
+from app.llm import (
+    ExtractionValidationError,
+    TokenUsage,
+    build_rag_prompt,
+    extract_resume,
+    generate,
+    is_greeting,
+)
 from app.models import Chunk, Document, DocumentStatus, UsageLog
 from app.pricing import calculate_cost
 from app.schema import (
@@ -321,7 +328,7 @@ async def ask(
     request: AskRequest,
     session: Session = Depends(get_session),
 ):
-    """Generate a streamed answer using the specified LLM provider and log token usage."""
+    """Generate a streamed answer based strictly on uploaded documents using pgvector retrieval."""
     start_time = time.perf_counter()
     usage_info: TokenUsage | None = None
 
@@ -329,9 +336,34 @@ async def ask(
         nonlocal usage_info
         usage_info = usage
 
+    # 1. Check for conversational greetings (handle without document retrieval)
+    if is_greeting(request.question):
+        prompt = (
+            "You are a friendly and helpful AI Document Assistant. "
+            f"The user greeted you with: '{request.question.strip()}'. "
+            "Provide a warm, natural, and helpful conversational greeting offering assistance with their documents."
+        )
+    else:
+        # 2. Retrieve relevant document chunks using pgvector semantic search
+        try:
+            matches = search_similar_chunks(
+                query_text=request.question,
+                k=5,
+                session=session,
+            )
+        except Exception as exc:
+            logger.warning("Retrieval failed during /ask: %s", exc)
+            matches = []
+
+        # 3. Build grounded RAG prompt from retrieved chunks
+        prompt = build_rag_prompt(
+            question=request.question,
+            chunks=matches,
+        )
+
     try:
         stream = generate(
-            prompt=request.question,
+            prompt=prompt,
             provider=request.provider,
             on_usage=on_usage,
         )

@@ -4,6 +4,7 @@ from collections.abc import Callable
 import logging
 import os
 from pathlib import Path
+import re
 
 import httpx
 import pymupdf
@@ -376,6 +377,12 @@ def compute_cosine_distance(vec1: list[float], vec2: list[float]) -> float:
     return max(0.0, min(2.0, 1.0 - similarity))
 
 
+ASSIGNMENT_QUERY_PATTERN = re.compile(
+    r"\bassignment\s*(\d+|[a-zA-Z]+)\b",
+    re.IGNORECASE,
+)
+
+
 def search_similar_chunks(
     query_text: str,
     k: int,
@@ -383,6 +390,9 @@ def search_similar_chunks(
     provider: str | None = None,
 ) -> list[tuple[Chunk, float]]:
     """Generate query embedding and find top-k closest chunks using cosine distance.
+
+    Supports assignment-specific re-ranking and contiguous chunk retrieval
+    while preserving global relevance filtering.
 
     Returns:
         List of tuples: (Chunk, cosine_similarity_score) ordered closest first.
@@ -401,18 +411,21 @@ def search_similar_chunks(
     bind = session.get_bind()
     is_postgres = getattr(bind.dialect, "name", "") == "postgresql"
 
+    # 4. Check if query is targeting a specific assignment
+    assignment_match = ASSIGNMENT_QUERY_PATTERN.search(query_text)
+
     if is_postgres:
-        # Native pgvector cosine distance operator <=>
         distance_expr = Chunk.embedding.cosine_distance(query_vector)
+        fetch_limit = max(k * 3, 15) if assignment_match else k
         statement = (
             select(Chunk, distance_expr.label("distance"))
             .join(Document, Document.id == Chunk.document_id)
             .where(Document.status == DocumentStatus.READY)
             .order_by(distance_expr.asc())
-            .limit(k)
+            .limit(fetch_limit)
         )
         rows = session.exec(statement).all()
-        return [(chunk, round(float(1.0 - dist), 4)) for chunk, dist in rows]
+        scored_chunks = [(chunk, round(float(1.0 - dist), 4)) for chunk, dist in rows]
     else:
         # In-memory SQLite fallback for unit/integration tests
         chunks = session.exec(
@@ -427,7 +440,81 @@ def search_similar_chunks(
             sim = round(float(1.0 - dist), 4)
             scored.append((chunk, dist, sim))
 
-        # Closest first (lowest distance)
         scored.sort(key=lambda item: item[1])
-        top_k = scored[:k]
-        return [(chunk, sim) for chunk, _, sim in top_k]
+        fetch_limit = max(k * 3, 15) if assignment_match else k
+        top_scored = scored[:fetch_limit]
+        scored_chunks = [(chunk, sim) for chunk, _, sim in top_scored]
+
+    # If NOT an assignment-specific query, return standard top-k semantic results directly
+    if not assignment_match:
+        return scored_chunks[:k]
+
+    # Assignment-specific retrieval: retrieve all relevant chunks (header + continuation chunks)
+    assign_num = assignment_match.group(1).lower()
+    target_regex = re.compile(rf"\bassignment\s*{re.escape(assign_num)}\b", re.IGNORECASE)
+    header_regex = re.compile(
+        rf"(?:^|\n)\s*assignment\s*{re.escape(assign_num)}\b\s*[:\-\n]", re.IGNORECASE
+    )
+
+    all_ready_chunks = session.exec(
+        select(Chunk)
+        .join(Document, Document.id == Chunk.document_id)
+        .where(Document.status == DocumentStatus.READY)
+        .order_by(Chunk.document_id, Chunk.chunk_index)
+    ).all()
+
+    chunk_map = {(c.document_id, c.chunk_index): c for c in all_ready_chunks}
+
+    primary_matches: list[Chunk] = []
+    secondary_matches: list[Chunk] = []
+    continuation_chunks: list[Chunk] = []
+
+    for c in all_ready_chunks:
+        if header_regex.search(c.text):
+            primary_matches.append(c)
+            # Retrieve contiguous continuation chunk (chunk_index + 1)
+            next_key = (c.document_id, c.chunk_index + 1)
+            if next_key in chunk_map:
+                next_c = chunk_map[next_key]
+                if not re.search(r"^\s*assignment\s*\d+", next_c.text, re.IGNORECASE):
+                    continuation_chunks.append(next_c)
+        elif target_regex.search(c.text):
+            secondary_matches.append(c)
+
+    # If no chunk matches the target assignment keyword, fall back to pure vector results
+    if not primary_matches and not secondary_matches:
+        return scored_chunks[:k]
+
+    seen_ids: set[str] = set()
+    final_results: list[tuple[Chunk, float]] = []
+
+    # 1. Primary header matches (score 0.98)
+    for c in primary_matches:
+        if c.id not in seen_ids:
+            seen_ids.add(c.id)
+            orig_score = next((s for chk, s in scored_chunks if chk.id == c.id), 0.70)
+            final_results.append((c, max(0.98, orig_score)))
+
+    # 2. Continuation chunks providing implementation/steps (score 0.95)
+    for c in continuation_chunks:
+        if c.id not in seen_ids:
+            seen_ids.add(c.id)
+            orig_score = next((s for chk, s in scored_chunks if chk.id == c.id), 0.65)
+            final_results.append((c, max(0.95, orig_score)))
+
+    # 3. Secondary/passing keyword matches (score 0.85)
+    for c in secondary_matches:
+        if c.id not in seen_ids:
+            seen_ids.add(c.id)
+            orig_score = next((s for chk, s in scored_chunks if chk.id == c.id), 0.60)
+            final_results.append((c, max(0.85, orig_score)))
+
+    # 4. Fill remaining slots up to k with top semantic vector matches
+    for c, score in scored_chunks:
+        if c.id not in seen_ids:
+            seen_ids.add(c.id)
+            final_results.append((c, score))
+            if len(final_results) >= k:
+                break
+
+    return final_results[: max(k, len(primary_matches) + len(continuation_chunks))]
