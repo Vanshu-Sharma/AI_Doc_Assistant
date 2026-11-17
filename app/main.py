@@ -148,43 +148,61 @@ async def upload_document(
             detail="Unsupported file type. Allowed types: PDF, TXT, DOCX",
         )
 
-    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    doc_id = str(uuid4())
+    temp_file_path = UPLOAD_DIR / f".tmp_{doc_id}_{filename}"
+    saved_file_path = UPLOAD_DIR / f"{doc_id}_{filename}"
 
-    if not content:
+    total_bytes = 0
+    chunk_size = 1024 * 1024  # 1 MB chunks
+
+    try:
+        with open(temp_file_path, "wb") as f:
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > MAX_UPLOAD_BYTES:
+                    break
+                f.write(chunk)
+    except Exception:
+        if temp_file_path.exists():
+            temp_file_path.unlink()
+        raise
+
+    if total_bytes == 0:
+        if temp_file_path.exists():
+            temp_file_path.unlink()
         raise HTTPException(
             status_code=400,
             detail="File is empty",
         )
 
-    if len(content) > MAX_UPLOAD_BYTES:
+    if total_bytes > MAX_UPLOAD_BYTES:
+        if temp_file_path.exists():
+            temp_file_path.unlink()
         raise HTTPException(
             status_code=413,
             detail="File exceeds the 10 MB limit",
         )
+
+    temp_file_path.rename(saved_file_path)
 
     initial_status = (
         DocumentStatus.PENDING if extension == ".pdf" else DocumentStatus.READY
     )
 
     document = Document(
-        id=str(uuid4()),
+        id=doc_id,
         filename=filename,
         content_type=file.content_type or "application/octet-stream",
-        size_bytes=len(content),
+        size_bytes=total_bytes,
         uploaded_at=datetime.now(timezone.utc),
         status=initial_status,
+        file_path=str(saved_file_path),
     )
 
-    session.add(document)
-    session.commit()
-    session.refresh(document)
-
-    # Save uploaded file to disk
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    saved_file_path = UPLOAD_DIR / f"{document.id}_{filename}"
-    saved_file_path.write_bytes(content)
-
-    document.file_path = str(saved_file_path)
     session.add(document)
     session.commit()
     session.refresh(document)
@@ -201,8 +219,12 @@ async def upload_document(
 
 
 @app.get("/documents", response_model=list[Document])
-def list_documents(session: Session = Depends(get_session)):
-    statement = select(Document)
+def list_documents(
+    limit: int = Query(default=100, ge=1, le=1000, description="Maximum documents to return"),
+    offset: int = Query(default=0, ge=0, description="Number of documents to skip"),
+    session: Session = Depends(get_session),
+):
+    statement = select(Document).offset(offset).limit(limit)
     return session.exec(statement).all()
 
 
@@ -405,16 +427,17 @@ async def ask(
                 cost_usd = Decimal("0")
 
             try:
-                save_usage_log(
-                    session=session,
-                    provider=provider,
-                    model=model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    total_tokens=total_tokens,
-                    latency_seconds=latency_seconds,
-                    cost_usd=cost_usd,
-                )
+                with Session(engine) as log_session:
+                    save_usage_log(
+                        session=log_session,
+                        provider=provider,
+                        model=model,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        total_tokens=total_tokens,
+                        latency_seconds=latency_seconds,
+                        cost_usd=cost_usd,
+                    )
             except Exception as db_exc:
                 logger.error(
                     "Database persistence failed for usage log: %s",
