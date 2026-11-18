@@ -401,10 +401,23 @@ async def ask(
 
         logger.error("LLM provider error (%s): %s", status_code, exc)
 
-        if status_code == 429:
+        exc_str = str(exc).lower()
+        is_rate_limit = (
+            status_code == 429
+            or "rate_limit_exceeded" in exc_str
+            or "rate limit" in exc_str
+            or "tokens per minute" in exc_str
+        )
+
+        if is_rate_limit:
             raise HTTPException(
                 status_code=429,
                 detail="LLM provider rate limit exceeded.",
+            ) from exc
+        elif status_code == 413:
+            raise HTTPException(
+                status_code=413,
+                detail="LLM request payload exceeds model context or rate limits.",
             ) from exc
         elif status_code and 500 <= status_code <= 599:
             raise HTTPException(
@@ -596,10 +609,23 @@ async def extract(
 
         logger.error("LLM provider error during extraction (%s): %s", status_code, exc)
 
-        if status_code == 429:
+        exc_str = str(exc).lower()
+        is_rate_limit = (
+            status_code == 429
+            or "rate_limit_exceeded" in exc_str
+            or "rate limit" in exc_str
+            or "tokens per minute" in exc_str
+        )
+
+        if is_rate_limit:
             raise HTTPException(
                 status_code=429,
                 detail="LLM provider rate limit exceeded.",
+            ) from exc
+        elif status_code == 413:
+            raise HTTPException(
+                status_code=413,
+                detail="LLM request payload exceeds model context or rate limits.",
             ) from exc
         elif status_code and 500 <= status_code <= 599:
             raise HTTPException(

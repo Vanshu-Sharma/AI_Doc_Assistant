@@ -259,3 +259,65 @@ def test_search_embedding_failure_handled_gracefully(
     response = client.get("/search?q=failing+query")
     assert response.status_code == 503
     assert "Search service error" in response.json()["detail"]
+
+
+def test_search_assignment_query_strictly_respects_k(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    """Verify that assignment-specific queries strictly respect the 'k' limit."""
+    doc_id = str(uuid.uuid4())
+    doc = Document(
+        id=doc_id,
+        filename="course_guide.pdf",
+        content_type="application/pdf",
+        size_bytes=4096,
+        status=DocumentStatus.READY,
+    )
+    session.add(doc)
+
+    c1 = Chunk(
+        id=str(uuid.uuid4()),
+        document_id=doc_id,
+        filename="course_guide.pdf",
+        page_number=1,
+        chunk_index=0,
+        text="Assignment 2: Document Storage Pipeline\nGoal: Build file upload and persistence.",
+        embedding=[0.9] + [0.1] * 767,
+    )
+    c2 = Chunk(
+        id=str(uuid.uuid4()),
+        document_id=doc_id,
+        filename="course_guide.pdf",
+        page_number=2,
+        chunk_index=1,
+        text="What to Build:\n1. POST /documents: upload endpoint up to 10MB.\n2. Store file locally.",
+        embedding=[0.85] + [0.1] * 767,
+    )
+    c3 = Chunk(
+        id=str(uuid.uuid4()),
+        document_id=doc_id,
+        filename="course_guide.pdf",
+        page_number=3,
+        chunk_index=2,
+        text="Checklist for Assignment 2:\nVerify test coverage and error handling.",
+        embedding=[0.8] + [0.1] * 767,
+    )
+    session.add(c1)
+    session.add(c2)
+    session.add(c3)
+    session.commit()
+
+    monkeypatch.setattr(
+        ingestion_module,
+        "generate_embedding",
+        lambda *args, **kwargs: [1.0] + [0.0] * 767,
+    )
+
+    response_k1 = client.get("/search?q=Explain+Assignment+2&k=1")
+    assert response_k1.status_code == 200
+    assert len(response_k1.json()) == 1
+
+    response_k2 = client.get("/search?q=Explain+Assignment+2&k=2")
+    assert response_k2.status_code == 200
+    assert len(response_k2.json()) == 2
+

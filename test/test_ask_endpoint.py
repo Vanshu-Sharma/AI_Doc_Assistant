@@ -202,6 +202,46 @@ def test_ask_llm_provider_rate_limit(client):
             assert len(session.exec(select(UsageLog)).all()) == 0
 
 
+def test_ask_llm_provider_tpm_rate_limit_413(client):
+    """Verify Groq TPM 413 rate limit error is mapped to HTTP 429."""
+    class MockGroqTPMError(Exception):
+        status_code = 413
+
+    async def mock_tpm_limit(prompt, provider, on_usage=None):
+        raise MockGroqTPMError(
+            "Error code: 413 - {'error': {'message': 'Request too large for model on tokens per minute (TPM): Limit 2000', 'code': 'rate_limit_exceeded'}}"
+        )
+        yield "never"
+
+    with patch("app.main.generate", side_effect=mock_tpm_limit):
+        response = client.post(
+            "/ask",
+            json={"question": "Large query?", "provider": "groq"},
+        )
+
+        assert response.status_code == 429
+        assert response.json()["detail"] == "LLM provider rate limit exceeded."
+
+
+def test_ask_llm_provider_payload_too_large_413(client):
+    """Verify standard 413 payload too large is mapped to HTTP 413."""
+    class Mock413Error(Exception):
+        status_code = 413
+
+    async def mock_payload_large(prompt, provider, on_usage=None):
+        raise Mock413Error("Payload too large")
+        yield "never"
+
+    with patch("app.main.generate", side_effect=mock_payload_large):
+        response = client.post(
+            "/ask",
+            json={"question": "Huge payload?", "provider": "groq"},
+        )
+
+        assert response.status_code == 413
+        assert response.json()["detail"] == "LLM request payload exceeds model context or rate limits."
+
+
 def test_ask_llm_provider_server_error(client):
     class Mock503Error(Exception):
         status_code = 503

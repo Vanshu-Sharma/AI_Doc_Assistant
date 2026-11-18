@@ -8,7 +8,7 @@ import re
 
 import httpx
 import pymupdf
-from sqlmodel import Session, select
+from sqlmodel import Session, col, or_, select
 
 import app.database as database_module
 from app.models import Chunk, Document, DocumentStatus
@@ -449,37 +449,50 @@ def search_similar_chunks(
     if not assignment_match:
         return scored_chunks[:k]
 
-    # Assignment-specific retrieval: retrieve all relevant chunks (header + continuation chunks)
+    # Assignment-specific retrieval: retrieve relevant chunks (header + continuation chunks)
     assign_num = assignment_match.group(1).lower()
     target_regex = re.compile(rf"\bassignment\s*{re.escape(assign_num)}\b", re.IGNORECASE)
     header_regex = re.compile(
         rf"(?:^|\n)\s*assignment\s*{re.escape(assign_num)}\b\s*[:\-\n]", re.IGNORECASE
     )
 
-    all_ready_chunks = session.exec(
+    candidate_chunks = session.exec(
         select(Chunk)
         .join(Document, Document.id == Chunk.document_id)
-        .where(Document.status == DocumentStatus.READY)
+        .where(
+            Document.status == DocumentStatus.READY,
+            col(Chunk.text).ilike(f"%assignment%{assign_num}%"),
+        )
         .order_by(Chunk.document_id, Chunk.chunk_index)
     ).all()
 
-    chunk_map = {(c.document_id, c.chunk_index): c for c in all_ready_chunks}
-
     primary_matches: list[Chunk] = []
     secondary_matches: list[Chunk] = []
-    continuation_chunks: list[Chunk] = []
 
-    for c in all_ready_chunks:
+    for c in candidate_chunks:
         if header_regex.search(c.text):
             primary_matches.append(c)
-            # Retrieve contiguous continuation chunk (chunk_index + 1)
-            next_key = (c.document_id, c.chunk_index + 1)
-            if next_key in chunk_map:
-                next_c = chunk_map[next_key]
-                if not re.search(r"^\s*assignment\s*\d+", next_c.text, re.IGNORECASE):
-                    continuation_chunks.append(next_c)
         elif target_regex.search(c.text):
             secondary_matches.append(c)
+
+    continuation_chunks: list[Chunk] = []
+    if primary_matches:
+        continuation_conds = [
+            (Chunk.document_id == c.document_id) & (Chunk.chunk_index == c.chunk_index + 1)
+            for c in primary_matches
+        ]
+        raw_continuations = session.exec(
+            select(Chunk)
+            .join(Document, Document.id == Chunk.document_id)
+            .where(
+                Document.status == DocumentStatus.READY,
+                or_(*continuation_conds),
+            )
+            .order_by(Chunk.document_id, Chunk.chunk_index)
+        ).all()
+        for next_c in raw_continuations:
+            if not re.search(r"^\s*assignment\s*\d+", next_c.text, re.IGNORECASE):
+                continuation_chunks.append(next_c)
 
     # If no chunk matches the target assignment keyword, fall back to pure vector results
     if not primary_matches and not secondary_matches:
@@ -517,4 +530,4 @@ def search_similar_chunks(
             if len(final_results) >= k:
                 break
 
-    return final_results[: max(k, len(primary_matches) + len(continuation_chunks))]
+    return final_results[:k]

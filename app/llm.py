@@ -270,12 +270,14 @@ Source: <filename>, Page <page_number>
 def build_rag_prompt(
     question: str,
     chunks: list | None = None,
+    max_context_chars: int = 6000,
 ) -> str:
     """Build the grounded RAG user prompt containing retrieved document chunks."""
     if not chunks:
         context_str = "No relevant document excerpts were found."
     else:
         parts = []
+        current_chars = 0
         for item in chunks:
             if isinstance(item, tuple):
                 chunk = item[0]
@@ -286,7 +288,11 @@ def build_rag_prompt(
             if page is None:
                 page = getattr(chunk, "page", 1)
             text = getattr(chunk, "text", "").strip()
-            parts.append(f"[Document: {filename} | Page: {page}]\n{text}")
+            entry = f"[Document: {filename} | Page: {page}]\n{text}"
+            if current_chars + len(entry) > max_context_chars and parts:
+                break
+            parts.append(entry)
+            current_chars += len(entry)
         context_str = "\n\n---\n\n".join(parts)
 
     return (
