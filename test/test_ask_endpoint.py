@@ -15,15 +15,19 @@ from app.models import Chunk, Document, DocumentStatus, UsageLog
 
 @pytest.fixture(autouse=True)
 def clean_usage_db():
-    """Ensure every test starts with an empty usagelog table."""
+    """Ensure every test starts with an empty database."""
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
+        session.exec(delete(Chunk))
+        session.exec(delete(Document))
         session.exec(delete(UsageLog))
         session.commit()
 
     yield
 
     with Session(engine) as session:
+        session.exec(delete(Chunk))
+        session.exec(delete(Document))
         session.exec(delete(UsageLog))
         session.commit()
 
@@ -451,17 +455,18 @@ def test_ask_when_answer_not_in_documents_fallback(client):
                 )
             )
 
-    with patch("app.main.generate", side_effect=mock_generate):
-        response = client.post(
-            "/ask",
-            json={
-                "question": "What is the speed of light in vacuum?",
-                "provider": "gemini",
-            },
-        )
+    with patch("app.main.search_similar_chunks", return_value=[]):
+        with patch("app.main.generate", side_effect=mock_generate):
+            response = client.post(
+                "/ask",
+                json={
+                    "question": "What is the speed of light in vacuum?",
+                    "provider": "gemini",
+                },
+            )
 
-        assert response.status_code == 200
-        assert response.text == "I couldn't find this information in the provided documents."
+            assert response.status_code == 200
+            assert response.text == "I couldn't find this information in the provided documents."
 
 
 def test_ask_retrieval_failure_raises_503(client):
