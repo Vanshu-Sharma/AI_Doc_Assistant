@@ -321,3 +321,136 @@ def test_search_assignment_query_strictly_respects_k(
     assert response_k2.status_code == 200
     assert len(response_k2.json()) == 2
 
+
+def test_search_similar_chunks_max_candidates_bounds_queries(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    """Verify search_similar_chunks bounds candidate and continuation queries by max_candidates."""
+    doc_id = str(uuid.uuid4())
+    doc = Document(
+        id=doc_id,
+        filename="guide.pdf",
+        content_type="application/pdf",
+        size_bytes=2048,
+        status=DocumentStatus.READY,
+    )
+    session.add(doc)
+
+    c0 = Chunk(
+        id=str(uuid.uuid4()),
+        document_id=doc_id,
+        filename="guide.pdf",
+        page_number=1,
+        chunk_index=0,
+        text="Assignment 2: Setup\nGoal: Build API.",
+        embedding=[0.0] * 768,
+    )
+    c1 = Chunk(
+        id=str(uuid.uuid4()),
+        document_id=doc_id,
+        filename="guide.pdf",
+        page_number=2,
+        chunk_index=1,
+        text="Implementation details for the endpoint.",
+        embedding=[0.0] * 768,
+    )
+    session.add(c0)
+    session.add(c1)
+    session.commit()
+
+    monkeypatch.setattr(
+        ingestion_module,
+        "generate_embedding",
+        lambda *args, **kwargs: [1.0] + [0.0] * 767,
+    )
+
+    orig_exec = session.exec
+    limits: list[int] = []
+
+    def spied_exec(statement, *args, **kwargs):
+        if hasattr(statement, "_limit") and statement._limit is not None:
+            limits.append(statement._limit)
+        return orig_exec(statement, *args, **kwargs)
+
+    session.exec = spied_exec  # type: ignore[assignment]
+
+    results = ingestion_module.search_similar_chunks(
+        query_text="Explain Assignment 2",
+        k=5,
+        session=session,
+        max_candidates=2,
+    )
+
+    # Both candidate query and continuation query applied .limit(2)
+    assert limits == [2, 2]
+    assert len(results) == 2
+    assert results[0][0].id == c0.id
+    assert results[1][0].id == c1.id
+
+
+def test_search_similar_chunks_configurable_env_limit(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    """Verify MAX_RETRIEVAL_CANDIDATES environment variable bounds candidate queries."""
+    monkeypatch.setenv("MAX_RETRIEVAL_CANDIDATES", "3")
+
+    doc_id = str(uuid.uuid4())
+    doc = Document(
+        id=doc_id,
+        filename="guide.pdf",
+        content_type="application/pdf",
+        size_bytes=2048,
+        status=DocumentStatus.READY,
+    )
+    session.add(doc)
+
+    c0 = Chunk(
+        id=str(uuid.uuid4()),
+        document_id=doc_id,
+        filename="guide.pdf",
+        page_number=1,
+        chunk_index=0,
+        text="Assignment 3: Data Pipeline\nBuild pipeline.",
+        embedding=[0.0] * 768,
+    )
+    c1 = Chunk(
+        id=str(uuid.uuid4()),
+        document_id=doc_id,
+        filename="guide.pdf",
+        page_number=2,
+        chunk_index=1,
+        text="Step 1: Ingest records.",
+        embedding=[0.0] * 768,
+    )
+    session.add(c0)
+    session.add(c1)
+    session.commit()
+
+    monkeypatch.setattr(
+        ingestion_module,
+        "generate_embedding",
+        lambda *args, **kwargs: [1.0] + [0.0] * 767,
+    )
+
+    orig_exec = session.exec
+    limits: list[int] = []
+
+    def spied_exec(statement, *args, **kwargs):
+        if hasattr(statement, "_limit") and statement._limit is not None:
+            limits.append(statement._limit)
+        return orig_exec(statement, *args, **kwargs)
+
+    session.exec = spied_exec  # type: ignore[assignment]
+
+    results = ingestion_module.search_similar_chunks(
+        query_text="Explain Assignment 3",
+        k=5,
+        session=session,
+    )
+
+    # MAX_RETRIEVAL_CANDIDATES=3 was used as limit for candidate and continuation queries
+    assert limits == [3, 3]
+    assert len(results) == 2
+
+
+

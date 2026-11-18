@@ -19,6 +19,8 @@ EMBEDDING_DIMENSION = 768
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_CHUNK_OVERLAP = 150
 BATCH_SIZE = 100
+DEFAULT_MAX_CANDIDATES = int(os.getenv("MAX_RETRIEVAL_CANDIDATES", "50"))
+DEFAULT_MAX_CANDIDATE_LIMIT = DEFAULT_MAX_CANDIDATES
 
 
 def read_pdf_pages(file_path: str | Path) -> list[tuple[int, str]]:
@@ -388,11 +390,20 @@ def search_similar_chunks(
     k: int,
     session: Session,
     provider: str | None = None,
+    max_candidates: int | None = None,
 ) -> list[tuple[Chunk, float]]:
     """Generate query embedding and find top-k closest chunks using cosine distance.
 
     Supports assignment-specific re-ranking and contiguous chunk retrieval
     while preserving global relevance filtering.
+
+    Args:
+        query_text: The search query text.
+        k: Maximum number of final chunks to return.
+        session: Active SQLModel database session.
+        provider: Embedding provider name (optional).
+        max_candidates: Maximum candidate chunks to retrieve during assignment lookup
+            (defaults to DEFAULT_MAX_CANDIDATES or MAX_RETRIEVAL_CANDIDATES env).
 
     Returns:
         List of tuples: (Chunk, cosine_similarity_score) ordered closest first.
@@ -456,6 +467,12 @@ def search_similar_chunks(
         rf"(?:^|\n)\s*assignment\s*{re.escape(assign_num)}\b\s*[:\-\n]", re.IGNORECASE
     )
 
+    candidate_limit = (
+        max_candidates
+        if max_candidates is not None and max_candidates > 0
+        else int(os.getenv("MAX_RETRIEVAL_CANDIDATES", str(DEFAULT_MAX_CANDIDATE_LIMIT)))
+    )
+
     candidate_chunks = session.exec(
         select(Chunk)
         .join(Document, Document.id == Chunk.document_id)
@@ -464,6 +481,7 @@ def search_similar_chunks(
             col(Chunk.text).ilike(f"%assignment%{assign_num}%"),
         )
         .order_by(Chunk.document_id, Chunk.chunk_index)
+        .limit(candidate_limit)
     ).all()
 
     primary_matches: list[Chunk] = []
@@ -480,7 +498,7 @@ def search_similar_chunks(
         continuation_conds = [
             (Chunk.document_id == c.document_id) & (Chunk.chunk_index == c.chunk_index + 1)
             for c in primary_matches
-        ]
+        ][:candidate_limit]
         raw_continuations = session.exec(
             select(Chunk)
             .join(Document, Document.id == Chunk.document_id)
@@ -489,6 +507,7 @@ def search_similar_chunks(
                 or_(*continuation_conds),
             )
             .order_by(Chunk.document_id, Chunk.chunk_index)
+            .limit(candidate_limit)
         ).all()
         for next_c in raw_continuations:
             if not re.search(r"^\s*assignment\s*\d+", next_c.text, re.IGNORECASE):

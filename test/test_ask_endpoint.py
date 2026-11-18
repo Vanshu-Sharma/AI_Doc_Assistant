@@ -464,7 +464,23 @@ def test_ask_when_answer_not_in_documents_fallback(client):
         assert response.text == "I couldn't find this information in the provided documents."
 
 
-def test_ask_retrieval_exception_fallback(client):
+def test_ask_retrieval_failure_raises_503(client):
+    """Verify that retrieval infrastructure failures raise HTTP 503 instead of silent fallback."""
+    with patch("app.main.search_similar_chunks", side_effect=RuntimeError("Vector DB unavailable")):
+        response = client.post(
+            "/ask",
+            json={
+                "question": "Explain Assignment 2",
+                "provider": "gemini",
+            },
+        )
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Document retrieval service is temporarily unavailable."
+
+
+def test_ask_retrieval_empty_succeeds_with_fallback(client):
+    """Verify that when retrieval succeeds but finds no chunks, normal fallback occurs."""
     captured_prompt = None
 
     async def mock_generate(prompt, provider, on_usage=None):
@@ -472,12 +488,12 @@ def test_ask_retrieval_exception_fallback(client):
         captured_prompt = prompt
         yield "I couldn't find this information in the provided documents."
 
-    with patch("app.main.search_similar_chunks", side_effect=RuntimeError("Vector DB unavailable")):
+    with patch("app.main.search_similar_chunks", return_value=[]):
         with patch("app.main.generate", side_effect=mock_generate):
             response = client.post(
                 "/ask",
                 json={
-                    "question": "Any question?",
+                    "question": "What is quantum computing?",
                     "provider": "gemini",
                 },
             )
@@ -486,6 +502,25 @@ def test_ask_retrieval_exception_fallback(client):
             assert response.text == "I couldn't find this information in the provided documents."
             assert captured_prompt is not None
             assert "No relevant document excerpts were found." in captured_prompt
+
+
+def test_ask_greeting_skips_retrieval_even_if_retrieval_fails(client):
+    """Verify greetings succeed without calling retrieval even if retrieval would raise an error."""
+    async def mock_generate(prompt, provider, on_usage=None):
+        yield "Hello! How can I help you today?"
+
+    with patch("app.main.search_similar_chunks", side_effect=RuntimeError("DB exploded")):
+        with patch("app.main.generate", side_effect=mock_generate):
+            response = client.post(
+                "/ask",
+                json={
+                    "question": "Hello",
+                    "provider": "gemini",
+                },
+            )
+
+            assert response.status_code == 200
+            assert "Hello!" in response.text
 
 
 @pytest.mark.parametrize(

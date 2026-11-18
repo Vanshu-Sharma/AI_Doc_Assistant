@@ -352,8 +352,11 @@ async def ask(
                 session=session,
             )
         except Exception as exc:
-            logger.warning("Retrieval failed during /ask: %s", exc)
-            matches = []
+            logger.error("Document retrieval failed during /ask: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Document retrieval service is temporarily unavailable.",
+            ) from exc
 
         # 3. Build grounded RAG prompt from retrieved chunks
         prompt = build_rag_prompt(
