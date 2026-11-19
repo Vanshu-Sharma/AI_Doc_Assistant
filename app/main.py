@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -155,6 +156,30 @@ async def upload_document(
             detail="Unsupported file type. Allowed types: PDF, TXT, DOCX",
         )
 
+    # Check if a document with the same filename is already uploaded
+    existing_by_name = session.exec(
+        select(Document).where(
+            Document.filename == filename,
+            Document.status != DocumentStatus.FAILED,
+        )
+    ).first()
+    if existing_by_name:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Document '{filename}' is already uploaded.",
+        )
+
+    # Clean up any previously failed record with the same filename
+    failed_doc = session.exec(
+        select(Document).where(
+            Document.filename == filename,
+            Document.status == DocumentStatus.FAILED,
+        )
+    ).first()
+    if failed_doc:
+        session.delete(failed_doc)
+        session.commit()
+
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     doc_id = str(uuid4())
     temp_file_path = UPLOAD_DIR / f".tmp_{doc_id}_{filename}"
@@ -162,6 +187,7 @@ async def upload_document(
 
     total_bytes = 0
     chunk_size = 1024 * 1024  # 1 MB chunks
+    hasher = hashlib.sha256()
 
     try:
         with open(temp_file_path, "wb") as f:
@@ -172,6 +198,7 @@ async def upload_document(
                 total_bytes += len(chunk)
                 if total_bytes > MAX_UPLOAD_BYTES:
                     break
+                hasher.update(chunk)
                 f.write(chunk)
     except Exception:
         if temp_file_path.exists():
@@ -193,6 +220,28 @@ async def upload_document(
             status_code=413,
             detail="File exceeds the 10 MB limit",
         )
+
+    # Check if a document with identical content is already uploaded
+    new_file_hash = hasher.hexdigest()
+    same_size_docs = session.exec(
+        select(Document).where(
+            Document.size_bytes == total_bytes,
+            Document.status != DocumentStatus.FAILED,
+        )
+    ).all()
+    for doc in same_size_docs:
+        if doc.file_path and Path(doc.file_path).exists():
+            existing_hasher = hashlib.sha256()
+            with open(doc.file_path, "rb") as ef:
+                while file_chunk := ef.read(chunk_size):
+                    existing_hasher.update(file_chunk)
+            if existing_hasher.hexdigest() == new_file_hash:
+                if temp_file_path.exists():
+                    temp_file_path.unlink()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"A document with identical content is already uploaded as '{doc.filename}'.",
+                )
 
     temp_file_path.rename(saved_file_path)
 
