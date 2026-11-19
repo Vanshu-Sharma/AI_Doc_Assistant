@@ -3,6 +3,7 @@ import inspect
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 
@@ -235,6 +236,73 @@ async def generate(
             )
 
             await asyncio.sleep(delay)
+
+
+GREETING_REGEX = re.compile(
+    r"^\s*(hi|hello|hey|howdy|greetings|good\s+(morning|afternoon|evening|day))"
+    r"(\s+(there|assistant|bot|ai|doc\s+assistant|team|everyone|all|friend))?"
+    r"[!.,?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_greeting(text: str) -> bool:
+    """Check if the user input is a conversational greeting rather than a document question."""
+    return bool(GREETING_REGEX.match(text.strip()))
+
+
+RAG_SYSTEM_PROMPT = """You are a helpful and strictly grounded AI document assistant.
+Your task is to answer the user's question based on the provided document excerpts.
+
+CRITICAL INSTRUCTIONS:
+1. Strict Grounding: Base your answer strictly on the facts, steps, and information directly stated in the provided document excerpts. Do not fabricate, hallucinate, or bring in unsupported outside information.
+2. Contextual Clarity for Assignment Queries: If the user asks about a specific assignment (e.g. 'Explain Assignment 2') and the provided document excerpts contain that assignment, explain it thoroughly with its goals, steps, and checklist. If the provided document excerpts outline the assignments covered in the guide (e.g. Week 2 covers Assignments 6 to 10) but do not contain the requested assignment, explain what assignments are present in the document and clarify that the requested assignment is not present or detailed in the provided documents, citing the source filename and page number.
+3. Completely Unrelated Queries: If the query is completely outside the scope of the provided documents and no relevant context exists (e.g. general trivia, unrelated domains), reply EXACTLY with:
+"I couldn't find this information in the provided documents."
+Do not include any source citations when saying this.
+4. Citations: When you answer using information from the excerpts, you MUST include the source filename and page number with your answer.
+At the end of your response, list the sources formatted as:
+Source: <filename>, Page <page_number>
+(If multiple pages or documents support the answer, list each one, e.g.: Source: file.pdf, Page 2; file.pdf, Page 3).
+"""
+
+
+def build_rag_prompt(
+    question: str,
+    chunks: list | None = None,
+    max_context_chars: int = 6000,
+) -> str:
+    """Build the grounded RAG user prompt containing retrieved document chunks."""
+    if not chunks:
+        context_str = "No relevant document excerpts were found."
+    else:
+        parts = []
+        current_chars = 0
+        for item in chunks:
+            if isinstance(item, tuple):
+                chunk = item[0]
+            else:
+                chunk = item
+            filename = getattr(chunk, "filename", "unknown")
+            page = getattr(chunk, "page_number", None)
+            if page is None:
+                page = getattr(chunk, "page", 1)
+            text = getattr(chunk, "text", "").strip()
+            entry = f"[Document: {filename} | Page: {page}]\n{text}"
+            if current_chars + len(entry) > max_context_chars and parts:
+                break
+            parts.append(entry)
+            current_chars += len(entry)
+        context_str = "\n\n---\n\n".join(parts)
+
+    return (
+        f"{RAG_SYSTEM_PROMPT}\n\n"
+        f"Context from uploaded documents:\n"
+        f"================================\n"
+        f"{context_str}\n"
+        f"================================\n\n"
+        f"User Question: {question.strip()}\n"
+    )
 
 
 EXTRACTION_SYSTEM_PROMPT = """You are an expert resume information extraction assistant.
