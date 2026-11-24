@@ -103,5 +103,33 @@ class UsageLog(SQLModel, table=True):
     )
 
 
+class Feedback(SQLModel, table=True):
+    """Store user thumbs up/down feedback for LLM responses and Langfuse traces."""
+
+    __tablename__ = "feedback"
+
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+    )
+    trace_id: str = Field(
+        index=True,
+        description="Associated Langfuse trace ID or request ID",
+    )
+    feedback: str = Field(
+        description="'thumbs_up' or 'thumbs_down'",
+    )
+    score: float = Field(
+        description="Normalized score: 1.0 for thumbs up, 0.0 for thumbs down",
+    )
+    comment: str | None = Field(
+        default=None,
+        description="Optional user comment",
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
 # Backward compatibility alias
 Document_Data = Document

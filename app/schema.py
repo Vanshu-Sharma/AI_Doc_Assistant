@@ -19,6 +19,11 @@ class AskRequest(BaseModel):
         description="LLM provider to use.",
     )
 
+    trace_id: str | None = Field(
+        default=None,
+        description="Optional Langfuse trace ID.",
+    )
+
     @field_validator("question")
     @classmethod
     def validate_question(cls, v: str) -> str:
@@ -153,4 +158,97 @@ class ExtractRequest(BaseModel):
         if isinstance(v, str):
             return v.strip().lower()
         return v
+
+
+class FeedbackRequest(BaseModel):
+    """Request schema for thumbs up/down user feedback."""
+
+    trace_id: str = Field(
+        min_length=1,
+        description="Trace ID associated with the response being evaluated.",
+    )
+    feedback: str | None = Field(
+        default=None,
+        description="Feedback rating: 'thumbs_up' or 'thumbs_down' (also accepts 'up'/'down').",
+    )
+    value: int | float | str | None = Field(
+        default=None,
+        description="Numeric or string score (1 for thumbs up, 0 or -1 for thumbs down).",
+    )
+    score: int | float | str | None = Field(
+        default=None,
+        description="Alias for value.",
+    )
+    rating: str | None = Field(
+        default=None,
+        description="Alias for feedback.",
+    )
+    comment: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Optional comment or explanation for the rating.",
+    )
+
+    @field_validator("trace_id")
+    @classmethod
+    def validate_trace_id(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("trace_id cannot be empty or blank.")
+        return v.strip()
+
+    @model_validator(mode="after")
+    def validate_and_normalize_feedback(self) -> "FeedbackRequest":
+        raw_val = self.feedback if self.feedback is not None else (
+            self.rating if self.rating is not None else (
+                self.score if self.score is not None else self.value
+            )
+        )
+        if raw_val is None:
+            raise ValueError(
+                "Feedback rating is required. Provide 'thumbs_up' or 'thumbs_down' (or value 1/0)."
+            )
+
+        if isinstance(raw_val, bool):
+            normalized_score = 1.0 if raw_val else 0.0
+            normalized_feedback = "thumbs_up" if raw_val else "thumbs_down"
+        elif isinstance(raw_val, (int, float)):
+            if raw_val > 0:
+                normalized_score = 1.0
+                normalized_feedback = "thumbs_up"
+            else:
+                normalized_score = 0.0
+                normalized_feedback = "thumbs_down"
+        elif isinstance(raw_val, str):
+            clean = raw_val.strip().lower()
+            if clean in {"thumbs_up", "thumbsup", "up", "+1", "1", "positive", "good", "true"}:
+                normalized_score = 1.0
+                normalized_feedback = "thumbs_up"
+            elif clean in {"thumbs_down", "thumbsdown", "down", "-1", "0", "negative", "bad", "false"}:
+                normalized_score = 0.0
+                normalized_feedback = "thumbs_down"
+            else:
+                raise ValueError(
+                    f"Invalid feedback rating: '{raw_val}'. Must be 'thumbs_up' or 'thumbs_down'."
+                )
+        else:
+            raise ValueError(f"Unsupported feedback type: {type(raw_val)}")
+
+        self.feedback = normalized_feedback
+        self.score = normalized_score
+        self.value = int(normalized_score)
+        return self
+
+
+class FeedbackResponse(BaseModel):
+    """Response schema for submitted user feedback."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    trace_id: str
+    feedback: str
+    score: float
+    comment: str | None = None
+    created_at: datetime
+
 

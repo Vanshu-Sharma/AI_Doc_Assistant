@@ -22,24 +22,28 @@ import httpx
 from sqlmodel import Session, delete, select
 
 
-from app.database import engine, get_session
+from app.database import engine, get_session, init_db
 from app.ingestion import ingest_document_pdf, search_similar_chunks
 from app.llm import ExtractionValidationError, TokenUsage, extract_resume, generate
-from app.models import Chunk, Document, DocumentStatus, UsageLog
+from app.models import Chunk, Document, DocumentStatus, Feedback, UsageLog
 from app.pricing import calculate_cost
 from app.schema import (
     AskRequest,
     ChunkResponse,
     ExtractRequest,
+    FeedbackRequest,
+    FeedbackResponse,
     ResumeData,
     SearchResult,
 )
+from app.tracing import create_trace_id, record_feedback_score, trace_generation
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_db()
     yield
 
 
@@ -324,6 +328,7 @@ async def ask(
     """Generate a streamed answer using the specified LLM provider and log token usage."""
     start_time = time.perf_counter()
     usage_info: TokenUsage | None = None
+    trace_id = request.trace_id or create_trace_id()
 
     def on_usage(usage: TokenUsage) -> None:
         nonlocal usage_info
@@ -386,10 +391,13 @@ async def ask(
             ) from exc
 
     async def stream_response_generator():
+        accumulated_chunks: list[str] = []
         try:
             if first_chunk:
+                accumulated_chunks.append(first_chunk)
                 yield first_chunk
             async for chunk in stream:
+                accumulated_chunks.append(chunk)
                 yield chunk
         except Exception as stream_exc:
             logger.error(
@@ -402,6 +410,10 @@ async def ask(
 
         # Request completed successfully
         latency_seconds = time.perf_counter() - start_time
+        full_output = "".join(accumulated_chunks)
+        model = "unknown"
+        provider = request.provider
+        cost_usd = Decimal("0")
 
         if usage_info is not None:
             provider = usage_info.provider or request.provider
@@ -445,10 +457,94 @@ async def ask(
                     exc_info=True,
                 )
 
+        # Log generation trace to Langfuse
+        try:
+            trace_generation(
+                trace_id=trace_id,
+                name="ask",
+                prompt=request.question,
+                output=full_output,
+                model=model,
+                provider=provider,
+                usage=usage_info,
+                cost_usd=float(cost_usd) if cost_usd else 0.0,
+                metadata={
+                    "latency_seconds": round(latency_seconds, 4),
+                },
+            )
+        except Exception as trace_exc:
+            logger.warning("Failed to trace ask generation: %s", trace_exc)
+
     return StreamingResponse(
         stream_response_generator(),
         media_type="text/plain; charset=utf-8",
+        headers={"X-Trace-Id": trace_id},
     )
+
+
+@app.post(
+    "/feedback",
+    response_model=FeedbackResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Submit User Feedback",
+    description="Submit thumbs up/down user feedback for an LLM response or trace ID.",
+    tags=["Feedback"],
+)
+def submit_feedback(
+    request: FeedbackRequest,
+    session: Session = Depends(get_session),
+) -> FeedbackResponse:
+    """Submit thumbs up/down feedback for a trace and persist to database & Langfuse."""
+    feedback_record = Feedback(
+        trace_id=request.trace_id,
+        feedback=request.feedback or "thumbs_up",
+        score=request.score if request.score is not None else 1.0,
+        comment=request.comment,
+    )
+    try:
+        session.add(feedback_record)
+        session.commit()
+        session.refresh(feedback_record)
+    except Exception as exc:
+        session.rollback()
+        logger.error("Failed to persist feedback to database: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save feedback to database.",
+        ) from exc
+
+    # Send score to Langfuse (non-blocking failure)
+    try:
+        record_feedback_score(
+            trace_id=feedback_record.trace_id,
+            score=feedback_record.score,
+            comment=feedback_record.comment,
+        )
+    except Exception as exc:
+        logger.warning("Failed to record score in Langfuse: %s", exc)
+
+    return feedback_record
+
+
+@app.get(
+    "/feedback",
+    response_model=list[FeedbackResponse],
+    summary="List Feedback",
+    description="List submitted feedback records, optionally filtered by trace ID.",
+    tags=["Feedback"],
+)
+def list_feedback(
+    trace_id: str | None = Query(default=None, description="Filter by trace ID"),
+    limit: int = Query(default=100, ge=1, le=1000, description="Max feedback items to return"),
+    offset: int = Query(default=0, ge=0, description="Number of feedback items to skip"),
+    session: Session = Depends(get_session),
+) -> list[Feedback]:
+    """Retrieve feedback records."""
+    statement = select(Feedback)
+    if trace_id:
+        statement = statement.where(Feedback.trace_id == trace_id)
+    statement = statement.offset(offset).limit(limit)
+    return list(session.exec(statement).all())
 
 
 @app.post("/extract", response_model=ResumeData, status_code=200)
