@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -24,7 +25,14 @@ from sqlmodel import Session, delete, select
 
 from app.database import engine, get_session
 from app.ingestion import ingest_document_pdf, search_similar_chunks
-from app.llm import ExtractionValidationError, TokenUsage, extract_resume, generate
+from app.llm import (
+    ExtractionValidationError,
+    TokenUsage,
+    build_rag_prompt,
+    extract_resume,
+    generate,
+    is_greeting,
+)
 from app.models import Chunk, Document, DocumentStatus, UsageLog
 from app.pricing import calculate_cost
 from app.schema import (
@@ -148,6 +156,30 @@ async def upload_document(
             detail="Unsupported file type. Allowed types: PDF, TXT, DOCX",
         )
 
+    # Check if a document with the same filename is already uploaded
+    existing_by_name = session.exec(
+        select(Document).where(
+            Document.filename == filename,
+            Document.status != DocumentStatus.FAILED,
+        )
+    ).first()
+    if existing_by_name:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Document '{filename}' is already uploaded.",
+        )
+
+    # Clean up any previously failed record with the same filename
+    failed_doc = session.exec(
+        select(Document).where(
+            Document.filename == filename,
+            Document.status == DocumentStatus.FAILED,
+        )
+    ).first()
+    if failed_doc:
+        session.delete(failed_doc)
+        session.commit()
+
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     doc_id = str(uuid4())
     temp_file_path = UPLOAD_DIR / f".tmp_{doc_id}_{filename}"
@@ -155,6 +187,7 @@ async def upload_document(
 
     total_bytes = 0
     chunk_size = 1024 * 1024  # 1 MB chunks
+    hasher = hashlib.sha256()
 
     try:
         with open(temp_file_path, "wb") as f:
@@ -165,6 +198,7 @@ async def upload_document(
                 total_bytes += len(chunk)
                 if total_bytes > MAX_UPLOAD_BYTES:
                     break
+                hasher.update(chunk)
                 f.write(chunk)
     except Exception:
         if temp_file_path.exists():
@@ -186,6 +220,28 @@ async def upload_document(
             status_code=413,
             detail="File exceeds the 10 MB limit",
         )
+
+    # Check if a document with identical content is already uploaded
+    new_file_hash = hasher.hexdigest()
+    same_size_docs = session.exec(
+        select(Document).where(
+            Document.size_bytes == total_bytes,
+            Document.status != DocumentStatus.FAILED,
+        )
+    ).all()
+    for doc in same_size_docs:
+        if doc.file_path and Path(doc.file_path).exists():
+            existing_hasher = hashlib.sha256()
+            with open(doc.file_path, "rb") as ef:
+                while file_chunk := ef.read(chunk_size):
+                    existing_hasher.update(file_chunk)
+            if existing_hasher.hexdigest() == new_file_hash:
+                if temp_file_path.exists():
+                    temp_file_path.unlink()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"A document with identical content is already uploaded as '{doc.filename}'.",
+                )
 
     temp_file_path.rename(saved_file_path)
 
@@ -321,7 +377,7 @@ async def ask(
     request: AskRequest,
     session: Session = Depends(get_session),
 ):
-    """Generate a streamed answer using the specified LLM provider and log token usage."""
+    """Generate a streamed answer based strictly on uploaded documents using pgvector retrieval."""
     start_time = time.perf_counter()
     usage_info: TokenUsage | None = None
 
@@ -329,9 +385,37 @@ async def ask(
         nonlocal usage_info
         usage_info = usage
 
+    # 1. Check for conversational greetings (handle without document retrieval)
+    if is_greeting(request.question):
+        prompt = (
+            "You are a friendly and helpful AI Document Assistant. "
+            f"The user greeted you with: '{request.question.strip()}'. "
+            "Provide a warm, natural, and helpful conversational greeting offering assistance with their documents."
+        )
+    else:
+        # 2. Retrieve relevant document chunks using pgvector semantic search
+        try:
+            matches = search_similar_chunks(
+                query_text=request.question,
+                k=5,
+                session=session,
+            )
+        except Exception as exc:
+            logger.error("Document retrieval failed during /ask: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Document retrieval service is temporarily unavailable.",
+            ) from exc
+
+        # 3. Build grounded RAG prompt from retrieved chunks
+        prompt = build_rag_prompt(
+            question=request.question,
+            chunks=matches,
+        )
+
     try:
         stream = generate(
-            prompt=request.question,
+            prompt=prompt,
             provider=request.provider,
             on_usage=on_usage,
         )
@@ -369,10 +453,23 @@ async def ask(
 
         logger.error("LLM provider error (%s): %s", status_code, exc)
 
-        if status_code == 429:
+        exc_str = str(exc).lower()
+        is_rate_limit = (
+            status_code == 429
+            or "rate_limit_exceeded" in exc_str
+            or "rate limit" in exc_str
+            or "tokens per minute" in exc_str
+        )
+
+        if is_rate_limit:
             raise HTTPException(
                 status_code=429,
                 detail="LLM provider rate limit exceeded.",
+            ) from exc
+        elif status_code == 413:
+            raise HTTPException(
+                status_code=413,
+                detail="LLM request payload exceeds model context or rate limits.",
             ) from exc
         elif status_code and 500 <= status_code <= 599:
             raise HTTPException(
@@ -564,10 +661,23 @@ async def extract(
 
         logger.error("LLM provider error during extraction (%s): %s", status_code, exc)
 
-        if status_code == 429:
+        exc_str = str(exc).lower()
+        is_rate_limit = (
+            status_code == 429
+            or "rate_limit_exceeded" in exc_str
+            or "rate limit" in exc_str
+            or "tokens per minute" in exc_str
+        )
+
+        if is_rate_limit:
             raise HTTPException(
                 status_code=429,
                 detail="LLM provider rate limit exceeded.",
+            ) from exc
+        elif status_code == 413:
+            raise HTTPException(
+                status_code=413,
+                detail="LLM request payload exceeds model context or rate limits.",
             ) from exc
         elif status_code and 500 <= status_code <= 599:
             raise HTTPException(

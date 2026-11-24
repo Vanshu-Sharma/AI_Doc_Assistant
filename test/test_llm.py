@@ -247,3 +247,25 @@ def test_groq_x_groq_usage_fallback(monkeypatch):
         assert recorded_usage.input_tokens == 8
         assert recorded_usage.output_tokens == 12
         assert recorded_usage.total_tokens == 20
+
+
+def test_build_rag_prompt_character_budgeting():
+    """Verify that build_rag_prompt truncates context when exceeding max_context_chars."""
+    class DummyChunk:
+        def __init__(self, filename, page_number, text):
+            self.filename = filename
+            self.page_number = page_number
+            self.text = text
+
+    chunks = [
+        DummyChunk("doc1.pdf", 1, "A" * 200),
+        DummyChunk("doc1.pdf", 2, "B" * 200),
+        DummyChunk("doc1.pdf", 3, "C" * 200),
+    ]
+
+    # Limit to 300 characters, so only the first chunk fits
+    prompt = llm.build_rag_prompt("Test question", chunks, max_context_chars=300)
+    assert "A" * 200 in prompt
+    assert "B" * 200 not in prompt
+    assert "C" * 200 not in prompt
+
