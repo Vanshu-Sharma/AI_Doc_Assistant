@@ -42,6 +42,8 @@ engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
 
 def init_db(max_retries: int = 5, retry_delay: float = 2.0) -> None:
     """Initialize database tables with retry logic for container startup."""
+    import app.models  # noqa: F401
+
     for attempt in range(1, max_retries + 1):
         try:
             SQLModel.metadata.create_all(engine)
