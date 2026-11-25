@@ -559,7 +559,7 @@ async def ask(
             trace_generation(
                 trace_id=trace_id,
                 name="ask",
-                prompt=request.question,
+                prompt=prompt,
                 output=full_output,
                 model=model,
                 provider=provider,
@@ -567,6 +567,7 @@ async def ask(
                 cost_usd=float(cost_usd) if cost_usd else 0.0,
                 metadata={
                     "latency_seconds": round(latency_seconds, 4),
+                    "question": request.question,
                 },
             )
         except Exception as trace_exc:
@@ -640,7 +641,7 @@ def list_feedback(
     statement = select(Feedback)
     if trace_id:
         statement = statement.where(Feedback.trace_id == trace_id)
-    statement = statement.offset(offset).limit(limit)
+    statement = statement.order_by(Feedback.created_at.desc()).offset(offset).limit(limit)
     return list(session.exec(statement).all())
 
 

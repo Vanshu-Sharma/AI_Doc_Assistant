@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -243,3 +244,51 @@ def test_langfuse_score_exception_does_not_break_feedback_endpoint(client):
         # Should still succeed and persist to database even if Langfuse is unreachable
         assert response.status_code == 200
         assert response.json()["trace_id"] == "trace-resilience"
+
+
+def test_ask_traces_full_rag_prompt_to_langfuse(client):
+    async def mock_generate(prompt, provider, on_usage=None):
+        yield "Answer text"
+
+    with patch("app.main.generate", side_effect=mock_generate), \
+         patch("app.main.trace_generation") as mock_trace:
+        resp = client.post(
+            "/ask",
+            json={"question": "What is Python?", "provider": "gemini"},
+        )
+        assert resp.status_code == 200
+        assert mock_trace.called
+        call_kwargs = mock_trace.call_args.kwargs
+        # The prompt logged to Langfuse must be the full prompt including instructions/context
+        assert "strictly grounded AI document assistant" in call_kwargs["prompt"]
+        assert "Context from uploaded documents:" in call_kwargs["prompt"]
+        assert "User Question: What is Python?" in call_kwargs["prompt"]
+        assert call_kwargs["prompt"] != "What is Python?"
+
+
+def test_list_feedback_ordering_deterministic(client):
+    with Session(engine) as session:
+        f1 = Feedback(
+            trace_id="trace-older",
+            feedback="thumbs_up",
+            score=1.0,
+            created_at=datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        f2 = Feedback(
+            trace_id="trace-newer",
+            feedback="thumbs_down",
+            score=0.0,
+            created_at=datetime(2026, 1, 2, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        session.add(f1)
+        session.add(f2)
+        session.commit()
+
+    resp = client.get("/feedback")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    # Newest feedback should appear first
+    assert data[0]["trace_id"] == "trace-newer"
+    assert data[1]["trace_id"] == "trace-older"
+
